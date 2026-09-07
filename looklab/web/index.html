@@ -195,6 +195,51 @@
   .stat .v { font-family: var(--mono); }
   .arrow { color: var(--accent); font-weight: 700; }
   .note { font-size: 11px; color: var(--muted); margin-top: 7px; line-height: 1.45; }
+  /* Work-in-progress indicator. A spinner alone says "something is
+     happening"; naming the stage says what, which is the difference between
+     waiting and wondering whether it broke. */
+  .status {
+    display: none; align-items: center; gap: 9px; margin-top: 9px;
+    padding: 8px 11px; border: 1px solid var(--line); border-radius: 6px;
+    background: var(--bg); font-size: 12.5px;
+  }
+  .status.on { display: flex; }
+  .status.done { border-color: var(--accent); color: var(--accent); }
+  .spinner {
+    width: 14px; height: 14px; flex: none; border-radius: 50%;
+    border: 2px solid var(--line); border-top-color: var(--accent);
+    animation: spin 0.7s linear infinite;
+  }
+  .status.done .spinner {
+    animation: none; border: 2px solid var(--accent);
+    border-radius: 50%; position: relative;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  /* With reduced motion the spinner does not spin, so the running elapsed
+     clock is what tells the user the app is still working. */
+  @media (prefers-reduced-motion: reduce) {
+    .spinner { animation: none; border: 2px dashed var(--accent); }
+  }
+  .status .elapsed { margin-left: auto; font-family: var(--mono); font-size: 11px; color: var(--muted); }
+  .status .stage { font-weight: 600; }
+  .status .sub { color: var(--muted); }
+
+  .thread .del {
+    margin-left: auto; border: 0; background: none; color: var(--muted);
+    font-size: 14px; line-height: 1; padding: 0 2px; cursor: pointer;
+    opacity: 0; border-radius: 3px;
+  }
+  .thread:hover .del, .thread.active .del { opacity: 1; }
+  .thread .del:hover { color: #c0392b; background: none; border: 0; }
+
+  .confirm {
+    border: 1px solid #c0392b; border-radius: 6px; padding: 9px 11px;
+    margin-bottom: 8px; font-size: 12px; background: var(--panel);
+  }
+  .confirm .row { display: flex; gap: 6px; margin-top: 7px; }
+  .confirm button { font-size: 11.5px; padding: 4px 9px; }
+  .confirm .danger { border-color: #c0392b; color: #c0392b; }
+
   .err {
     background: #fdecea; border: 1px solid #f5c6c0; color: #8a1c10;
     padding: 7px 10px; border-radius: 5px; font-size: 12.5px; margin-bottom: 10px;
@@ -220,6 +265,7 @@
 
     <div class="sec">
       <h2>Threads</h2>
+      <div id="confirmBox"></div>
       <div id="threadList"></div>
       <div style="display:flex; gap:6px; margin-top:8px;">
         <input type="text" id="newThread" placeholder="thread name" spellcheck="false">
@@ -247,6 +293,13 @@
     <div class="composer">
       <input type="text" id="input" placeholder="Ask me what a look is, how to get one, or what's wrong with an edit&hellip;" spellcheck="false">
       <button class="primary" id="send">Send</button>
+    </div>
+
+    <div class="status" id="status">
+      <span class="spinner" id="spinner"></span>
+      <span><span class="stage" id="statusStage"></span>
+        <span class="sub" id="statusSub"></span></span>
+      <span class="elapsed" id="statusElapsed"></span>
     </div>
 
     <div class="drop" id="drop">
@@ -385,7 +438,7 @@
   }
 
   function api(path, opts) {
-    return fetch(path, opts).then(function (r) {
+    return fetch(path, opts || {}).then(function (r) {
       if (!r.ok) {
         return r.text().then(function (t) {
           throw new Error("HTTP " + r.status + " on " + path + " - " + t.slice(0, 200));
@@ -401,12 +454,120 @@
     var box = $("threadList");
     box.innerHTML = "";
     state.threads.forEach(function (t) {
-      var b = document.createElement("button");
-      b.className = "thread" + (t === state.thread ? " active" : "");
-      b.innerHTML = "<span>" + esc(t) + "</span>";
-      b.onclick = function () { selectThread(t); };
-      box.appendChild(b);
+      var row = document.createElement("button");
+      row.className = "thread" + (t === state.thread ? " active" : "");
+      row.innerHTML = "<span>" + esc(t) + "</span>";
+      row.onclick = function () { selectThread(t); };
+
+      var del = document.createElement("button");
+      del.className = "del";
+      del.textContent = "\u00d7";
+      del.title = "Delete this conversation permanently";
+      del.onclick = function (e) { e.stopPropagation(); askDelete(t); };
+      row.appendChild(del);
+
+      box.appendChild(row);
     });
+  }
+
+  // ---- deleting a conversation ------------------------------------------
+  function askDelete(name) {
+    var box = $("confirmBox");
+    box.innerHTML =
+      '<div class="confirm"><b>Delete &ldquo;' + esc(name) + '&rdquo;?</b><br>' +
+      "Its messages, recipe and any uploaded images are removed for good. " +
+      "Your saved profile is kept." +
+      '<div class="row"><button class="danger" id="confirmDel">Delete</button>' +
+      '<button id="cancelDel">Cancel</button></div></div>';
+    $("cancelDel").onclick = function () { box.innerHTML = ""; };
+    $("confirmDel").onclick = function () { doDelete(name); };
+  }
+
+  function doDelete(name) {
+    $("confirmBox").innerHTML = "";
+    showStatus("Deleting", "removing messages, images and freeing disk\u2026");
+    api("/thread/" + encodeURIComponent(name), { method: "DELETE" })
+      .then(function (r) {
+        state.threads = state.threads.filter(function (t) { return t !== name; });
+        delete sentThumbs[name];                       // drop the local previews too
+        if (state.thread === name) {
+          state.thread = state.threads[0] || "default";
+          $("threadName").textContent = state.thread;
+        }
+        renderThreads();
+        var freed = r.bytes_reclaimed
+          ? " Freed " + (r.bytes_reclaimed / 1024).toFixed(0) + " KB."
+          : "";
+        finishStatus("Deleted", "\u201c" + name + "\u201d is gone." + freed);
+        return loadThread();
+      })
+      .catch(function (e) { hideStatus(); showError(e.message); });
+  }
+
+  // ---- progress ----------------------------------------------------------
+  // Honest staging: these are the phases the graph actually runs, advanced on
+  // a timer because a single POST gives no progress events. The elapsed clock
+  // is real, so a slow turn never looks like a frozen one.
+  var statusTimer = null, elapsedTimer = null, statusStart = 0;
+
+  function showStatus(stage, sub) {
+    $("status").classList.add("on");
+    $("status").classList.remove("done");
+    $("statusStage").textContent = stage;
+    $("statusSub").textContent = sub ? "\u2014 " + sub : "";
+  }
+
+  function hideStatus() {
+    clearInterval(statusTimer); clearInterval(elapsedTimer);
+    $("status").classList.remove("on", "done");
+    $("statusElapsed").textContent = "";
+  }
+
+  function finishStatus(stage, sub) {
+    clearInterval(statusTimer); clearInterval(elapsedTimer);
+    if (statusStart) {
+      // Freeze the clock at the real total rather than blanking it -- "took
+      // 3.2s" is useful information, especially on a free host that sleeps.
+      $("statusElapsed").textContent =
+        ((Date.now() - statusStart) / 1000).toFixed(1) + "s";
+    }
+    $("status").classList.add("on", "done");
+    $("statusStage").textContent = stage;
+    $("statusSub").textContent = sub ? "\u2014 " + sub : "";
+    setTimeout(function () {
+      if ($("status").classList.contains("done")) { hideStatus(); }
+    }, 4000);
+  }
+
+  function startStatus(hasImages) {
+    var stages = hasImages
+      ? [["Reading your image", "decoding the upload"],
+         ["Measuring colour", "converting to CIELAB and splitting into tonal zones"],
+         ["Comparing", "matching against the 15-look library"],
+         ["Working out the sliders", "turning the difference into Lightroom moves"],
+         ["Writing it up", "trimming the conversation to the token budget"]]
+      : [["Thinking", "working out what you are asking for"],
+         ["Looking it up", "checking the reference library"],
+         ["Working out the sliders", "turning the difference into Lightroom moves"],
+         ["Writing it up", "trimming the conversation to the token budget"]];
+    var i = 0;
+    statusStart = Date.now();
+    showStatus(stages[0][0], stages[0][1]);
+    clearInterval(statusTimer); clearInterval(elapsedTimer);
+
+    function tickElapsed() {
+      $("statusElapsed").textContent = ((Date.now() - statusStart) / 1000).toFixed(1) + "s";
+    }
+    // Paint 0.0s immediately rather than waiting for the first interval. A
+    // local turn finishes in about 40ms, so a timer that only fires at 100ms
+    // would never run at all and the clock would sit empty.
+    tickElapsed();
+
+    statusTimer = setInterval(function () {
+      i = Math.min(i + 1, stages.length - 1);
+      showStatus(stages[i][0], stages[i][1]);
+    }, 900);
+    elapsedTimer = setInterval(tickElapsed, 60);
   }
 
   function selectThread(t) {
@@ -458,6 +619,7 @@
   // Thumbnails of what was last sent, kept per thread so switching threads
   // does not show another conversation's images.
   var sentThumbs = {};
+  var sentImageCount = 0;
 
   function renderMeasured(images, thumbs) {
     var sec = document.getElementById("measuredSec");
@@ -553,6 +715,7 @@
     state.busy = true;
     $("send").disabled = true;      // belt: no double-submit
     showError("");
+    startStatus(!!(state.refB64 || state.curB64));
 
     var body = {
       message: text,
@@ -563,6 +726,7 @@
     if (state.refB64) { body.reference_b64 = state.refB64; }
     if (state.curB64) { body.current_b64 = state.curB64; }
 
+    sentImageCount = (state.refB64 ? 1 : 0) + (state.curB64 ? 1 : 0);
     // Keep the previews so the "measured images" pane can show what was sent,
     // even though the server only ever stores the numbers.
     if (state.refB64 || state.curB64) {
@@ -583,8 +747,29 @@
       renderBranch(r.intent, r.branch_node);
       clearImages();
       loadModels();
+
+      // Say what actually happened, in the app's own terms.
+      var what = {
+        identify: "identified the look",
+        achieve: "worked out the slider steps",
+        critique: "checked your edit",
+        chat: "answered"
+      }[r.intent] || "done";
+      var bits = [what];
+      if (sentImageCount) {
+        bits.push("measured " + sentImageCount +
+                  (sentImageCount === 1 ? " image" : " images"));
+      }
+      if ((r.recipe || []).length) { bits.push(r.recipe.length + " steps in the recipe"); }
+      var t = r.telemetry || {};
+      if (t.msgs_before && t.msgs_after_trim < t.msgs_before) {
+        bits.push("trimmed " + t.msgs_before + " \u2192 " + t.msgs_after_trim + " messages");
+      }
+      finishStatus("Done", bits.join(" \u00b7 "));
+      sentImageCount = 0;
       return loadThread();
     }).catch(function (e) {
+      hideStatus();
       showError(e.message);
     }).then(function () {
       state.busy = false;

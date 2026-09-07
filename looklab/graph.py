@@ -470,7 +470,8 @@ def node_respond(state: LookState) -> dict:
     # write still happens in `save_profile`, where it belongs -- otherwise the
     # reply to "I'm Suraj, I shoot on a Fuji" would not acknowledge either fact
     # while the profile pane visibly fills beside it.
-    profile = {**(state.get("profile") or {}), **extract_profile_facts(user_text)}
+    learned = extract_profile_facts(user_text)
+    profile = {**(state.get("profile") or {}), **{k: v for k, v in learned.items() if k != "_note"}}
     system = "You are LookLab, a colour-grading assistant."
     described = describe_profile(profile)
     if described:
@@ -488,6 +489,11 @@ def node_respond(state: LookState) -> dict:
     facts: dict[str, Any] = {
         "profile": profile,
         "user_text": user_text,
+        # What this turn taught us, so the reply can confirm the save rather
+        # than leaving the user to guess whether it worked.
+        "saved_facts": {
+            ("remembered" if k == "_note" else k): v for k, v in learned.items()
+        },
         "signature": images.get("current") or images.get("reference") or {},
     }
     if intent == "identify":

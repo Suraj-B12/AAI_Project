@@ -27,7 +27,7 @@ required — the knowledge base is committed and the narrator is deterministic.
 
 ```bash
 pip install -r requirements-dev.txt
-pytest -q                       # 129 tests
+pytest -q                       # 142 tests
 python -m tools.stress          # 49 load / fuzz / soak checks against a live server
 python -m tools.calibrate       # the evaluation table below
 ```
@@ -77,6 +77,59 @@ class LookState(TypedDict):
 append-only log of edit steps where superseded entries are kept on purpose,
 because the history of corrections *is* the point. Blind concatenation is the
 correct semantics there.
+
+---
+
+## What it can tell you
+
+The advice covers the panels a photographer actually uses, not just the Basic
+sliders:
+
+| Panel | What it advises on |
+|---|---|
+| **Basic** | Temp, Tint, Contrast, Blacks, Whites, Shadows, Highlights, Vibrance/Saturation |
+| **Colour Grading** | the Shadows, Midtones, Highlights and Global wheels, each with a hue and a saturation |
+| **Colour Mixer (HSL)** | per-colour Hue, Saturation and Luminance across eight families &mdash; red, orange, yellow, green, aqua, blue, purple, magenta |
+
+Every step says *what to move and why* in plain language, and keeps the
+measurement on a separate line so the reasoning is readable without knowing
+what CIELAB is:
+
+```
+1. Color Grading > Shadows  hue 185, sat 36
+   Tint the dark areas toward teal. This is the biggest single thing
+   that makes the look recognisable.
+   (the dark areas are about 157 degrees of hue apart)
+
+2. Temp +11
+   The look you want is noticeably warmer than your photo. Push toward yellow.
+   (blue-yellow axis +1.6 -> +8.3)
+```
+
+HSL families are measured by bucketing pixels by hue around eight measured
+CIELAB centres, weighted by chroma so near-grey pixels do not vote, and a
+family is only advised on when it occupies at least 4% of **both** frames.
+Otherwise the engine would confidently tell you to move the Purple slider
+because of a few dozen pixels.
+
+---
+
+## Memory you control
+
+Say **"remember that ..."**, "note that ...", "don't forget ..." or "save this
+to memory" and the fact is written to the long-term store, which is keyed by
+user rather than by conversation. It then applies in every future thread. Free
+notes are capped at ten and the oldest fall off, because memory that grows
+without limit is a storage leak.
+
+Conversations can be **deleted permanently**, including their uploaded images.
+Deleting rows is not enough: SQLite in WAL mode keeps the pages in the sidecar
+until a checkpoint and in the freelist until a VACUUM, so the delete path runs
+checkpoint &rarr; VACUUM &rarr; checkpoint and reports the bytes actually freed
+(measured: 5.5 MB &rarr; 52 KB on a thread holding ten image turns). The
+per-thread lock is dropped too, and a deleted demo thread is not re-seeded on
+the next restart. The long-term profile is deliberately kept &mdash; it belongs
+to you, not to one conversation.
 
 ---
 
@@ -295,7 +348,7 @@ slider value is structurally impossible.
 ## Testing
 
 ```
-pytest -q                    129 passed
+pytest -q                    142 passed
 python -m tools.stress        49/49 checks passed
 ```
 
@@ -395,3 +448,4 @@ tests/
 | GET | `/models` | narrator status and per-key Gemini health |
 | GET | `/health` | liveness and configuration |
 | GET | `/threads` | thread list, used by the switcher |
+| DELETE | `/thread/{thread_id}` | delete a conversation and its images, reclaim disk |

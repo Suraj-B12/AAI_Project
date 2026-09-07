@@ -56,7 +56,7 @@ async def lifespan(_app: FastAPI):
         try:
             from .seed import seed
 
-            seed(GRAPH)
+            seed(GRAPH, skip=_protected_seeds)
         except Exception:  # never let seeding stop the server from starting
             pass
     yield
@@ -77,6 +77,17 @@ GRAPH = build_graph(CHECKPOINTER, STORE)
 
 _thread_locks: defaultdict[str, threading.Lock] = defaultdict(threading.Lock)
 _locks_guard = threading.Lock()
+
+# Demo threads the lifespan handler creates on a cold start. A thread the user
+# has deliberately deleted must stay deleted, so deleted seeds are remembered
+# for the life of the process and skipped when seeding runs again.
+try:
+    from .seed import SCRIPTS as _SEED_SCRIPTS
+
+    SEEDED_THREAD_IDS = frozenset(_SEED_SCRIPTS)
+except Exception:  # pragma: no cover
+    SEEDED_THREAD_IDS = frozenset()
+_protected_seeds: set[str] = set()
 
 
 def _lock_for(thread_id: str) -> threading.Lock:
@@ -322,6 +333,52 @@ def threads(user_id: str = "suraj") -> dict[str, Any]:
 @app.get("/state/{thread_id}")
 def state(thread_id: str) -> dict[str, Any]:
     return _state_payload(thread_id)
+
+
+@app.delete("/thread/{thread_id}")
+def delete_thread(thread_id: str) -> dict[str, Any]:
+    """Delete a conversation permanently, and give the disk back.
+
+    Everything about the thread lives in the checkpointer -- the messages, the
+    recipe, and the measured image signatures -- so removing the thread removes
+    the uploads with it. The raw pixels were never stored in the first place;
+    they are measured and discarded inside the analyze node.
+
+    Deleting rows is not enough to free space: in WAL mode the pages survive in
+    the sidecar until a checkpoint and in the freelist until a VACUUM. See
+    ``persistence.reclaim_space``.
+
+    The long-term profile is deliberately NOT touched. It belongs to the user,
+    not to one conversation, and it is what a fresh thread reads on entry.
+    """
+    from .persistence import reclaim_space
+
+    if thread_id in SEEDED_THREAD_IDS:
+        # Otherwise the lifespan handler helpfully recreates it on the next
+        # restart and the delete looks like it silently failed.
+        _protected_seeds.add(thread_id)
+
+    existed = bool(_state_payload(thread_id).get("exists"))
+    with _lock_for(thread_id):
+        try:
+            CHECKPOINTER.delete_thread(thread_id)
+        except Exception as exc:
+            raise HTTPException(500, f"could not delete thread: {type(exc).__name__}: {exc}")
+
+    space = reclaim_space(CHECKPOINTER.conn)
+
+    # Drop the per-thread lock too. Keeping one around for every thread that
+    # ever existed is a slow memory leak in a long-running process.
+    with _locks_guard:
+        _thread_locks.pop(thread_id, None)
+
+    return {
+        "deleted": thread_id,
+        "existed": existed,
+        "bytes_before": space["before"],
+        "bytes_after": space["after"],
+        "bytes_reclaimed": max(0, space["before"] - space["after"]),
+    }
 
 
 @app.get("/profile/{user_id}")

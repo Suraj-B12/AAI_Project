@@ -74,6 +74,53 @@ def make_checkpointer(path: str | None = None) -> SqliteSaver:
     return saver
 
 
+def reclaim_space(conn: sqlite3.Connection, force: bool = False) -> dict[str, int]:
+    """Actually give the disk back after a delete.
+
+    A plain ``DELETE`` returns nothing to the filesystem. In WAL mode the rows
+    are removed from the logical database but the pages live on in the -wal
+    file until a checkpoint, and the freed pages stay in the main file's
+    freelist until a VACUUM. Measured on a thread holding ten image turns:
+    delete alone left the files at 5.5 MB; checkpoint, VACUUM and a second
+    checkpoint brought them to 52 KB.
+
+    VACUUM rewrites the whole database, so it is skipped unless enough pages
+    are actually free -- otherwise every delete would pay for a full rewrite.
+    """
+    freed_before = _db_bytes(conn)
+    try:
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        freelist = int(conn.execute("PRAGMA freelist_count").fetchone()[0])
+        page_size = int(conn.execute("PRAGMA page_size").fetchone()[0])
+        # Rewrite only when there is a meaningful amount to reclaim.
+        if force or freelist * page_size > 256 * 1024:
+            conn.execute("VACUUM")
+            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    except sqlite3.Error:
+        # Reclaiming is an optimisation; failing to do it must not fail a
+        # delete the user has already been told succeeded.
+        pass
+    return {"before": freed_before, "after": _db_bytes(conn)}
+
+
+def _db_bytes(conn: sqlite3.Connection) -> int:
+    """Size of the database plus its WAL sidecar, in bytes."""
+    try:
+        row = conn.execute("PRAGMA database_list").fetchone()
+        path = row[2] if row else None
+    except sqlite3.Error:
+        return 0
+    if not path:
+        return 0
+    total = 0
+    for suffix in ("", "-wal", "-shm"):
+        try:
+            total += os.path.getsize(path + suffix)
+        except OSError:
+            continue
+    return total
+
+
 def make_store(path: str | None = None) -> SqliteStore:
     """Long-term memory: namespaced by ``user_id``, independent of any thread."""
     store = SqliteStore(connect(_resolve(path, "LOOKLAB_STORE_PATH", "DEFAULT_STORE_PATH")))

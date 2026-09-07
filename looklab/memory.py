@@ -76,9 +76,40 @@ _NAME_STOPWORDS = {
 
 _MAX_VALUE_LEN = 60
 
+# Things that follow "I shoot" but are not cameras. Without this,
+# "I shoot weddings on a Nikon Z6" stores the camera as "weddings on a".
+_NOT_A_CAMERA = {
+    "weddings", "portraits", "landscapes", "events", "film", "digital", "raw",
+    "jpeg", "a lot", "everything", "mostly", "professionally", "people",
+    "products", "sports", "street", "nature", "wildlife", "concerts",
+}
+
+# An explicit instruction to remember something. These are checked before the
+# implicit patterns and stored verbatim, because when a user says "remember
+# that I hate crushed blacks" they have told you exactly what to keep -- there
+# is nothing to infer, and guessing a category would lose the point.
+EXPLICIT_SAVE_PATTERNS: list[str] = [
+    r"\b(?:please\s+)?remember\s+(?:that\s+|this[:,]?\s+|me\s+)?(.+)",
+    r"\b(?:save|store|keep)\s+(?:this|that|it)?\s*(?:to|in|into)?\s*"
+    r"(?:your\s+)?(?:long[- ]?term\s+)?memory[:,]?\s*(.+)",
+    r"\b(?:save|store|note|keep)\s+(?:this|that)[:,]\s*(.+)",
+    r"\bnote\s+(?:that\s+|down\s+)(.+)",
+    r"\bmake\s+a\s+note\s+(?:that\s+|of\s+)?(.+)",
+    r"\bdon'?t\s+forget\s+(?:that\s+)?(.+)",
+    r"\bkeep\s+in\s+mind\s+(?:that\s+)?(.+)",
+]
+
+# How many free-form notes to keep per user. Long-term memory that grows
+# without limit is a storage leak, and the oldest note is the least likely to
+# still be true.
+MAX_NOTES = 10
+_MAX_NOTE_LEN = 240
+
 
 _TRAILING_JUNK = re.compile(
-    r"\s+(?:and|but|because|so|then|with|which|that|too|also|as well)$", re.IGNORECASE
+    r"\s+(?:and|but|because|so|then|with|which|that|too|also|as well"
+    r"|on|in|at|of|for|to|a|an|the|using)$",
+    re.IGNORECASE,
 )
 
 
@@ -93,10 +124,51 @@ def _clean(value: str) -> str:
     return value[:_MAX_VALUE_LEN]
 
 
+def explicit_save_request(text: str) -> str | None:
+    """The thing the user explicitly asked to be remembered, if any.
+
+    Returns the remembered content, or None when this is not a save request.
+    """
+    if not text:
+        return None
+    for pattern in EXPLICIT_SAVE_PATTERNS:
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if not match:
+            continue
+        note = re.sub(r"\s+", " ", match.group(1)).strip(" .,;:!?-\"'")
+        # "remember?" or "remember me" alone is not a fact to store.
+        if len(note) < 3:
+            continue
+        return note[:_MAX_NOTE_LEN]
+    return None
+
+
 def extract_profile_facts(text: str) -> dict[str, str]:
-    """Pull profile facts out of a single user utterance. Deterministic."""
+    """Pull profile facts out of a single user utterance. Deterministic.
+
+    An explicit "remember that ..." is handled first and its content is
+    scanned for known fields, so "remember that I shoot on a Nikon Z6" both
+    stores the sentence and fills in the camera field.
+    """
     if not text:
         return {}
+    found: dict[str, str] = {}
+
+    explicit = explicit_save_request(text)
+    if explicit:
+        # Re-run the field patterns against the remembered clause only, so
+        # "remember that I like warm tones" sets preferred_look rather than
+        # matching something earlier in the sentence.
+        found.update(_scan_fields(explicit))
+        found["_note"] = explicit
+        return found
+
+    found.update(_scan_fields(text))
+    return found
+
+
+def _scan_fields(text: str) -> dict[str, str]:
+    """Run the field patterns over one piece of text."""
     found: dict[str, str] = {}
     lowered = text.lower()
 
@@ -113,8 +185,10 @@ def extract_profile_facts(text: str) -> dict[str, str]:
             if value.lower() in _NAME_STOPWORDS or len(value) < 2:
                 continue
             value = value[:1].upper() + value[1:]
-        if key == "camera" and value.lower() in _NAME_STOPWORDS:
-            continue
+        if key == "camera":
+            head = value.lower().split()[0] if value.split() else ""
+            if value.lower() in _NAME_STOPWORDS or head in _NOT_A_CAMERA:
+                continue
         found[key] = value
     return found
 
@@ -150,18 +224,48 @@ def load_profile(store: Any, user_id: str) -> dict[str, Any]:
 
 
 def save_profile_facts(store: Any, user_id: str, facts: dict[str, str]) -> list[str]:
-    """Write extracted facts; returns the keys actually written."""
+    """Write extracted facts; returns the keys actually written.
+
+    ``_note`` is treated separately: free-form things the user explicitly asked
+    to be remembered are appended to a capped list rather than overwriting one
+    another, because "remember I hate teal" and "remember I shoot weddings"
+    are both worth keeping.
+    """
     if store is None or not user_id or not facts:
         return []
     namespace = (PROFILE_NAMESPACE, str(user_id))
     written: list[str] = []
+
     for key, value in facts.items():
+        if key == "_note":
+            if _append_note(store, namespace, str(value)):
+                written.append("notes")
+            continue
         try:
             store.put(namespace, key, {"value": value})
             written.append(key)
         except Exception:
             continue
     return written
+
+
+def _append_note(store: Any, namespace: tuple, note: str) -> bool:
+    """Append to the capped note list. Duplicates are ignored."""
+    try:
+        existing = store.get(namespace, "notes")
+        notes = list((existing.value or {}).get("value") or []) if existing else []
+    except Exception:
+        notes = []
+    if any(note.lower() == str(n).lower() for n in notes):
+        return True  # already known; treat as saved rather than duplicating
+    notes.append(note)
+    # Keep the most recent MAX_NOTES: an unbounded list is a storage leak.
+    notes = notes[-MAX_NOTES:]
+    try:
+        store.put(namespace, "notes", {"value": notes})
+        return True
+    except Exception:
+        return False
 
 
 def describe_profile(profile: dict[str, Any]) -> str:
@@ -181,5 +285,12 @@ def describe_profile(profile: dict[str, Any]) -> str:
         for key in order
         if profile.get(key)
     ]
-    parts += [f"{k} is {v}" for k, v in profile.items() if k not in order and v]
+    notes = profile.get("notes")
+    if isinstance(notes, list) and notes:
+        parts.append("they asked you to remember: " + "; ".join(str(n) for n in notes))
+    parts += [
+        f"{k} is {v}"
+        for k, v in profile.items()
+        if k not in order and k != "notes" and v
+    ]
     return "; ".join(parts)

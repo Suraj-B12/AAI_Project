@@ -29,14 +29,43 @@ def _fmt_amount(amount: Any) -> str:
 
 
 def _bullet_steps(steps: list[dict]) -> str:
+    """One line per step: what to move, then why, then the numbers.
+
+    The numbers go last and in smaller words on purpose. A photographer needs
+    to know which slider and which direction; the measurement is there to be
+    checked, not to be waded through.
+    """
     lines = []
     for i, step in enumerate(steps, 1):
-        lines.append(f"{i}. **{step['slider']} {_fmt_amount(step['amount'])}** - {step['why']}")
+        head = f"{i}. **{step['slider']} {_fmt_amount(step['amount'])}**"
+        why = step.get("why") or ""
+        detail = step.get("detail") or ""
+        line = f"{head}\n   {why}"
+        if detail:
+            line += f"\n   _({detail})_"
+        lines.append(line)
     return "\n".join(lines)
 
 
+def _plain_distance(distance: float) -> str:
+    """Turn the internal distance into something a person can act on."""
+    if distance <= 0.35:
+        return "very close already"
+    if distance <= 0.8:
+        return "fairly close"
+    if distance <= 1.5:
+        return "some way off"
+    return "a long way off"
+
+
 class DemoChatModel:
-    """Deterministic narrator. Same inputs always produce the same words."""
+    """Deterministic narrator. Same inputs always produce the same words.
+
+    Written to be read by a photographer, not by a colour scientist. Numbers
+    appear where they help you check the advice, and the measurements are
+    described in ordinary words -- "the dark areas lean blue" rather than
+    "shadow hue 271 degrees, chroma 14.8".
+    """
 
     name = "DemoChatModel (deterministic, no API key required)"
     is_deterministic = True
@@ -47,74 +76,130 @@ class DemoChatModel:
             return self._say_chat(facts)
         return handler(facts)
 
+    # -- shared -------------------------------------------------------------
+    @staticmethod
+    def _describe(sig: dict) -> str:
+        """A short plain-language read of what an image looks like."""
+        if not sig:
+            return ""
+        bits = []
+        b = float(sig.get("b_global", 0.0))
+        if b > 16:
+            bits.append("warm overall")
+        elif b < 2:
+            bits.append("cool overall")
+        else:
+            bits.append("fairly neutral in warmth")
+
+        contrast = float(sig.get("contrast", 0.0))
+        if contrast > 78:
+            bits.append("high contrast")
+        elif contrast < 45:
+            bits.append("low contrast, quite flat")
+        else:
+            bits.append("moderate contrast")
+
+        chroma = float(sig.get("chroma", 0.0))
+        if chroma > 32:
+            bits.append("strong colour")
+        elif chroma < 12:
+            bits.append("muted colour")
+
+        return ", ".join(bits)
+
+    @staticmethod
+    def _hsl_line(sig: dict) -> str:
+        """Which colour families actually occupy the frame."""
+        hsl = sig.get("hsl") or {}
+        present = sorted(
+            ((v.get("coverage", 0.0), k) for k, v in hsl.items() if v.get("coverage", 0) >= 0.05),
+            reverse=True,
+        )
+        if not present:
+            return ""
+        named = ", ".join(f"{name} ({cov * 100:.0f}%)" for cov, name in present[:4])
+        return f"Colour families in frame: {named}."
+
     # -- identify -----------------------------------------------------------
     def _say_identify(self, facts: dict) -> str:
         matches = facts.get("matches") or []
         if not matches:
             return (
-                "I could not measure a signature for that. Upload a reference image, "
-                "or name a look from the library and I will describe it."
+                "I could not measure anything yet. Upload a photo, or just name a "
+                "look you want to know about \u2014 try \"what is teal and orange?\""
             )
         best = matches[0]
 
-        # Recommended from the long-term profile rather than measured. This is
-        # the answer to "what should I try?" in a thread that has never been
-        # told anything -- the payoff for storing taste across conversations.
         if best.get("from_profile"):
             profile = facts.get("profile") or {}
             known = []
             if profile.get("camera"):
                 known.append(f"you shoot on a {profile['camera']}")
             if profile.get("preferred_look"):
-                known.append(f"you lean toward {profile['preferred_look']}")
+                known.append(f"you like {profile['preferred_look']}")
             if profile.get("dislikes"):
-                known.append(f"you'd rather avoid {profile['dislikes']}")
+                known.append(f"you would rather avoid {profile['dislikes']}")
             lead = (
-                f"Going on what you've told me before -- {', and '.join(known)} -- "
+                f"Going on what you have told me before \u2014 {', and '.join(known)} \u2014 "
                 if known
-                else "Based on your saved profile, "
+                else "Based on what I have saved about you, "
             )
-            lines = [lead + "these are the closest fits in the library:", ""]
+            lines = [lead + "here is what I would try:", ""]
             for match in matches:
-                lines.append(f"- **{match['label']}** - {match['notes']}")
+                lines.append(f"- **{match['label']}** \u2014 {match['notes']}")
             lines.append(
-                "\nSay \"how do I get the "
-                f"{matches[0]['label'].lower()} look?\" and I'll give you the slider steps."
+                f"\nSay \"how do I get the {matches[0]['label'].lower()} look?\" "
+                f"and I will give you the exact sliders."
             )
             return "\n".join(lines)
+
         sig = facts.get("signature") or {}
         lines = []
         if best.get("confident"):
             lines.append(
-                f"That reads closest to **{best['label']}** "
-                f"(distance {best['distance']:.2f}, confidence {best['confidence']:.0%})."
+                f"This is closest to **{best['label']}**. "
+                f"{best['notes']}"
             )
         else:
             lines.append(
-                f"**No confident match.** The nearest entry is *{best['label']}* at "
-                f"distance {best['distance']:.2f}, which is past my threshold - so I would "
-                f"rather say I do not know than force one."
+                f"**I am not confident about this one.** The nearest thing in my "
+                f"library is *{best['label']}*, but it is not a clean match, so I would "
+                f"rather say so than guess."
             )
-        if best.get("notes"):
-            lines.append(f"_{best['notes']}_")
 
         if sig:
-            lines.append(
-                f"\nWhat I measured: shadow hue **{sig.get('shadow_hue', 0):.0f}deg** "
-                f"(chroma {sig.get('shadow_C', 0):.1f}, coherence {sig.get('shadow_coh', 0):.2f}), "
-                f"highlight hue **{sig.get('high_hue', 0):.0f}deg**, "
-                f"contrast **{sig.get('contrast', 0):.0f}** L\\*, "
-                f"overall a\\* {sig.get('a_global', 0):+.1f} / b\\* {sig.get('b_global', 0):+.1f}."
-            )
-            coh = float(sig.get("shadow_coh", 0.0))
-            if coh < 0.35:
+            read = self._describe(sig)
+            if read:
+                lines.append(f"\nWhat I see: {read}.")
+            shadow_c = float(sig.get("shadow_C", 0.0))
+            if shadow_c > 5:
                 lines.append(
-                    f"Note the low shadow coherence ({coh:.2f}) - the shadow hues largely "
-                    f"cancel out, which usually means a colourful subject rather than a grade."
+                    f"The dark areas lean {_colour_word(float(sig.get('shadow_hue', 0.0)))}, "
+                    f"which is usually the deliberate part of a look."
                 )
+            high_c = float(sig.get("high_C", 0.0))
+            if high_c > 5:
+                lines.append(
+                    f"The bright areas lean "
+                    f"{_colour_word(float(sig.get('high_hue', 0.0)))}."
+                )
+            hsl = self._hsl_line(sig)
+            if hsl:
+                lines.append(hsl)
+            coh = float(sig.get("shadow_coh", 0.0))
+            if coh and coh < 0.35:
+                lines.append(
+                    "Worth knowing: the colours in the shadows point in lots of "
+                    "different directions, so that is probably the subject rather "
+                    "than a grade."
+                )
+
         if len(matches) > 1:
-            others = ", ".join(f"{m['label']} ({m['distance']:.2f})" for m in matches[1:])
-            lines.append(f"\nRunners-up: {others}.")
+            others = ", ".join(m["label"] for m in matches[1:])
+            lines.append(f"\nOther possibilities: {others}.")
+        lines.append(
+            f"\nWant the recipe? Ask \"how do I get the {best['label'].lower()} look?\""
+        )
         return "\n".join(lines)
 
     # -- achieve ------------------------------------------------------------
@@ -126,30 +211,37 @@ class DemoChatModel:
 
         if not steps and distance is not None:
             return (
-                f"You are within tolerance of {target_name} - measured distance "
-                f"**{distance:.3f}**, below my convergence threshold. Nothing left worth changing."
+                f"You are there. Your photo now matches {target_name} closely enough "
+                f"that any further change would be guesswork rather than improvement."
             )
         if not steps:
             return (
-                "I need something to compare against. Upload a reference image, or name a "
-                "look from the library - try *warm golden* or *teal and orange*."
+                "I need something to aim at. Either upload the photo you want to "
+                "match, or name a look \u2014 for example \"how do I get the warm "
+                "golden look?\""
             )
 
-        head = f"To move toward {target_name}, in this order:"
+        head = f"Here is how to move your photo toward {target_name}. Work top to bottom:"
         body = _bullet_steps(steps)
         tail = []
         if distance is not None:
             if previous is not None:
-                delta = previous - distance
-                arrow = "down from" if delta > 0 else "up from"
-                tail.append(
-                    f"\nDistance to target: **{distance:.3f}** ({arrow} {previous:.3f})."
-                )
+                moved = previous - distance
+                if moved > 0.01:
+                    tail.append(
+                        f"\nYou are closer than last time \u2014 {_plain_distance(distance)} now, "
+                        f"down from {_plain_distance(previous)}."
+                    )
+                else:
+                    tail.append(
+                        f"\nStill {_plain_distance(distance)}. That happens \u2014 sliders "
+                        f"interact, so a change can move one thing and shift another."
+                    )
             else:
-                tail.append(f"\nDistance to target: **{distance:.3f}**.")
+                tail.append(f"\nRight now you are {_plain_distance(distance)}.")
             tail.append(
-                "Apply these, re-upload, and I will re-measure. The slider mapping is "
-                "approximate, so the loop is what makes it converge."
+                "Apply these, upload the result, and I will measure again and give "
+                "you smaller corrections. It usually takes two or three rounds."
             )
         return "\n".join([head, "", body, *tail])
 
@@ -161,30 +253,30 @@ class DemoChatModel:
         lines = []
 
         if not sig:
-            # No image at all. Saying "technically this is clean" here would be
-            # asserting something about a frame that was never measured.
             return (
-                "I have nothing to look at yet - upload the edit you want critiqued and I "
-                "will measure it. I check clipping, tonal range, colour casts and "
-                "saturation, and compare the result against what you have told me you like."
+                "Upload the edit you want me to look at and I will check it for "
+                "blown highlights, crushed shadows, colour casts and over-saturation "
+                "\u2014 and compare it against what you have told me you like."
             )
 
+        read = self._describe(sig)
+        if read:
+            lines.append(f"Overall this reads as {read}.")
+
         if not faults:
-            lines.append("Technically this is clean - no clipping, no cast, tonal range is sane.")
+            lines.append("\nTechnically it is clean. No clipping, no cast, sensible contrast.")
         else:
-            lines.append(f"**{len(faults)} thing{'s' if len(faults) != 1 else ''} I would fix:**")
+            lines.append(f"\n**{len(faults)} thing{'s' if len(faults) != 1 else ''} I would fix:**")
             for fault in faults:
                 lines.append(
-                    f"- **{fault['issue']}** ({fault['severity']}) - {fault['detail']}. "
-                    f"Try: {fault['fix']}."
+                    f"\n- **{fault['issue']}** \u2014 {fault['detail']}.\n"
+                    f"  What to do: {fault['fix']}."
                 )
-        if sig:
-            lines.append(
-                f"\nMeasured: contrast **{sig.get('contrast', 0):.0f}** L\\*, "
-                f"mean chroma **{sig.get('chroma', 0):.1f}**, "
-                f"clipping {float(sig.get('clip_black', 0)) * 100:.1f}% black / "
-                f"{float(sig.get('clip_white', 0)) * 100:.1f}% white."
-            )
+
+        hsl = self._hsl_line(sig)
+        if hsl:
+            lines.append(f"\n{hsl}")
+
         if notes:
             lines.append("\n**Against what you have told me you like:**")
             for note in notes:
@@ -195,50 +287,72 @@ class DemoChatModel:
     def _say_chat(self, facts: dict) -> str:
         profile = facts.get("profile") or {}
         text = (facts.get("user_text") or "").lower()
+        saved = facts.get("saved_facts") or {}
 
-        greeting = ""
-        if profile.get("name"):
-            greeting = f"Hi {profile['name']}. "
+        greeting = f"Hi {profile['name']}. " if profile.get("name") else ""
 
-        if any(k in text for k in ("what can you do", "help", "how does this work", "what is this")):
-            body = (
-                "I measure colour in CIELAB and turn the difference between two images into "
-                "Lightroom slider moves. Three things I can do:\n\n"
-                "1. **Identify** - \"what look is this?\" - I match a signature against a "
-                "15-look reference library.\n"
-                "2. **Achieve** - \"how do I get the teal and orange look?\" - I compute the "
-                "delta and give you ordered slider steps, then refine as you re-upload.\n"
-                "3. **Critique** - \"what's wrong with my edit?\" - I check clipping, contrast, "
-                "casts and saturation, and compare against your stated taste.\n\n"
-                "You can do all three by name with no uploads at all. "
-                "No vision model is involved - every number is measured."
+        if saved:
+            pretty = "; ".join(f"{k.replace('_', ' ')}: {v}" for k, v in saved.items())
+            return (
+                f"{greeting}Saved. I will remember that \u2014 {pretty}.\n\n"
+                f"It stays with your profile, so it applies in every conversation, "
+                f"not just this one."
             )
-            return greeting + body
+
+        if any(k in text for k in ("what can you do", "help", "how does this work",
+                                   "what is this", "how do i use")):
+            return greeting + (
+                "I measure the actual colour in a photo and turn it into Lightroom "
+                "slider moves. Three things I can do:\n\n"
+                "**1. Identify** \u2014 \"what look is this?\" Upload a photo and I will "
+                "tell you which style it is closest to and what makes it that.\n\n"
+                "**2. Recreate** \u2014 \"how do I get the teal and orange look?\" I give you "
+                "ordered slider steps: Basic panel, Colour Grading wheels, and the "
+                "Colour Mixer (HSL) per colour. Upload your result and I will refine it.\n\n"
+                "**3. Critique** \u2014 \"what is wrong with my edit?\" I check clipping, "
+                "contrast, colour casts and saturation.\n\n"
+                "You can also tell me things to remember \u2014 your camera, the looks you "
+                "like \u2014 and I will use them in future conversations.\n\n"
+                "No AI image model is involved. Every number comes from measuring pixels."
+            )
 
         known = []
         if profile.get("camera"):
             known.append(f"you shoot on a {profile['camera']}")
         if profile.get("preferred_look"):
-            known.append(f"you lean toward {profile['preferred_look']}")
+            known.append(f"you like {profile['preferred_look']}")
         if profile.get("dislikes"):
-            known.append(f"you dislike {profile['dislikes']}")
+            known.append(f"you avoid {profile['dislikes']}")
         if profile.get("editor"):
             known.append(f"you edit in {profile['editor']}")
 
         if known:
             return (
                 greeting
-                + "Noted - "
+                + "Got it \u2014 "
                 + ", and ".join(known)
-                + ". I will keep that in mind. Ask me to identify a look, help you achieve one, "
-                "or critique an edit."
+                + ". I will keep that in mind.\n\nAsk me to identify a look, recreate "
+                "one, or check an edit."
             )
         return (
             greeting
-            + "I am a colour-grading assistant. Ask me what a look is, how to achieve one, or "
-            "what is wrong with an edit. Tell me your camera and what you like and I will "
-            "remember it across conversations."
+            + "I am a colour-grading assistant. Ask me what a look is, how to get "
+            "one, or what is wrong with an edit \u2014 you do not need to upload "
+            "anything to start. Try: *how do I get the warm golden look?*"
         )
+
+
+def _colour_word(lab_hue: float) -> str:
+    """Nearest everyday colour word for a measured hue angle."""
+    from .rules import LAB_HUE
+    from .color import circ_dist
+
+    best, best_gap = "neutral", 1e9
+    for name, angle in LAB_HUE.items():
+        gap = circ_dist(lab_hue, angle)
+        if gap < best_gap:
+            best, best_gap = name, gap
+    return best
 
 
 class GeminiNarrator:

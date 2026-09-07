@@ -66,13 +66,19 @@ SLIDER_DEFAULTS: dict[str, float] = {
     "saturation": 0.0,  # -100 .. +100, uniform
     "cg_shadow_hue": 0.0,  # 0..360 degrees
     "cg_shadow_sat": 0.0,  # 0..100
+    "cg_mid_hue": 0.0,  # 0..360 degrees -- Lightroom's Midtones wheel
+    "cg_mid_sat": 0.0,  # 0..100
     "cg_high_hue": 0.0,  # 0..360 degrees
     "cg_high_sat": 0.0,  # 0..100
+    "cg_global_hue": 0.0,  # 0..360 degrees -- the Global wheel, all tones
+    "cg_global_sat": 0.0,  # 0..100
 }
 
 # Sliders whose value is an angle, so "0" means "no hue chosen" rather than
 # "neutral"; they only take effect when the paired saturation is non-zero.
-HUE_SLIDERS = frozenset({"cg_shadow_hue", "cg_high_hue"})
+HUE_SLIDERS = frozenset(
+    {"cg_shadow_hue", "cg_mid_hue", "cg_high_hue", "cg_global_hue"}
+)
 
 # Rec.709 luma weights, applied to linear-light RGB (used for white-balance
 # renormalisation, where linear light is the physically correct space).
@@ -285,9 +291,19 @@ def apply_grade(rgb01: np.ndarray, sliders: dict | None) -> np.ndarray:
         strength = np.clip(s["cg_shadow_sat"], 0.0, 100.0) / 100.0
         m = 1.0 - _smooth_mask(y, 0.0, 0.55)
         img = img + (0.42 * strength) * m[..., None] * _hue_to_unit_rgb(s["cg_shadow_hue"])
+    if s["cg_mid_sat"]:
+        # Midtones: a band, not a ramp -- strongest at mid-grey and falling
+        # away toward both ends, which is what Lightroom's Midtones wheel does.
+        strength = np.clip(s["cg_mid_sat"], 0.0, 100.0) / 100.0
+        m = _smooth_mask(y, 0.10, 0.5) * (1.0 - _smooth_mask(y, 0.5, 0.90))
+        img = img + (0.55 * strength) * m[..., None] * _hue_to_unit_rgb(s["cg_mid_hue"])
     if s["cg_high_sat"]:
         strength = np.clip(s["cg_high_sat"], 0.0, 100.0) / 100.0
         m = _smooth_mask(y, 0.45, 1.0)
         img = img + (0.42 * strength) * m[..., None] * _hue_to_unit_rgb(s["cg_high_hue"])
+    if s["cg_global_sat"]:
+        # Global: every tone equally, so no luminance mask at all.
+        strength = np.clip(s["cg_global_sat"], 0.0, 100.0) / 100.0
+        img = img + (0.34 * strength) * _hue_to_unit_rgb(s["cg_global_hue"])
 
     return np.clip(img, 0.0, 1.0)

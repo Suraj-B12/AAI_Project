@@ -292,3 +292,133 @@ def test_seeded_threads_appear_in_the_thread_list(client):
     """The UI populates its switcher from /threads, so they must be listed."""
     names = {t["thread_id"] for t in client.get("/threads").json()["threads"]}
     assert {"warm-portrait", "cold-landscape"} <= names
+
+
+# --------------------------------------------------------------------------
+# Deleting a conversation
+# --------------------------------------------------------------------------
+
+def test_delete_thread_removes_messages_recipe_and_images(client):
+    """Deleting must take the uploads with it, not just the text."""
+    payload = base64.b64encode(_jpeg_bytes()).decode()
+    for i in range(3):
+        client.post(
+            "/chat",
+            json={
+                "message": f"how do i match these? {i}",
+                "thread_id": "to-delete",
+                "reference_b64": payload,
+                "current_b64": payload,
+            },
+        )
+    before = client.get("/state/to-delete").json()
+    assert before["exists"] and before["messages"] and before["images"]
+
+    body = client.delete("/thread/to-delete").json()
+    assert body["existed"] is True
+    assert body["deleted"] == "to-delete"
+
+    after = client.get("/state/to-delete").json()
+    assert after["exists"] is False
+    assert after["messages"] == [] and after["recipe"] == [] and after["images"] == {}
+
+
+def test_delete_thread_reclaims_disk(client):
+    """A delete that leaves the pages on disk is not a delete.
+
+    SQLite in WAL mode keeps deleted pages in the sidecar until a checkpoint
+    and in the freelist until a VACUUM, so this asserts the bytes actually go.
+    """
+    payload = base64.b64encode(_jpeg_bytes(size=384)).decode()
+    for i in range(6):
+        client.post(
+            "/chat",
+            json={
+                "message": f"how do i match these? {i}",
+                "thread_id": "fat-thread",
+                "reference_b64": payload,
+                "current_b64": payload,
+            },
+        )
+    body = client.delete("/thread/fat-thread").json()
+    assert body["bytes_after"] < body["bytes_before"], (
+        f"no space reclaimed: {body['bytes_before']} -> {body['bytes_after']}"
+    )
+    assert body["bytes_reclaimed"] > 0
+
+
+def test_delete_leaves_other_threads_and_the_profile_alone(client):
+    """The profile belongs to the user, not to one conversation."""
+    client.post(
+        "/chat",
+        json={
+            "message": "Hi, I'm Suraj. I shoot on a Fuji X-T4.",
+            "thread_id": "del-a",
+            "user_id": "del-user",
+        },
+    )
+    client.post("/chat", json={"message": "hello", "thread_id": "del-b", "user_id": "del-user"})
+
+    client.delete("/thread/del-a")
+
+    assert client.get("/state/del-b").json()["exists"] is True
+    assert client.get("/profile/del-user").json()["profile"].get("name") == "Suraj"
+
+
+def test_deleting_an_unknown_thread_is_not_an_error(client):
+    body = client.delete("/thread/never-existed-at-all").json()
+    assert body["existed"] is False
+
+
+def test_deleted_thread_disappears_from_the_thread_list(client):
+    client.post("/chat", json={"message": "hello", "thread_id": "listed-then-gone"})
+    names = {t["thread_id"] for t in client.get("/threads").json()["threads"]}
+    assert "listed-then-gone" in names
+    client.delete("/thread/listed-then-gone")
+    names = {t["thread_id"] for t in client.get("/threads").json()["threads"]}
+    assert "listed-then-gone" not in names
+
+
+# --------------------------------------------------------------------------
+# Explicit long-term memory
+# --------------------------------------------------------------------------
+
+def test_remember_this_saves_to_long_term_memory(client):
+    """"Remember that ..." must persist, and be visible from another thread."""
+    body = client.post(
+        "/chat",
+        json={
+            "message": "remember that I always print my work on matte paper",
+            "thread_id": "mem-a",
+            "user_id": "mem-user",
+        },
+    ).json()
+    assert "matte paper" in body["reply"].lower() or "saved" in body["reply"].lower()
+
+    profile = client.get("/profile/mem-user").json()["profile"]
+    notes = profile.get("notes") or []
+    assert any("matte paper" in str(n).lower() for n in notes), profile
+
+    # And it reaches a completely different conversation.
+    other = client.post(
+        "/chat", json={"message": "hello", "thread_id": "mem-b", "user_id": "mem-user"}
+    ).json()
+    assert any("matte paper" in str(n).lower() for n in other["profile"].get("notes") or [])
+
+
+def test_notes_do_not_grow_without_bound(client):
+    from looklab.memory import MAX_NOTES
+
+    for i in range(MAX_NOTES + 6):
+        client.post(
+            "/chat",
+            json={
+                "message": f"remember that fact number {i} matters to me",
+                "thread_id": "mem-cap",
+                "user_id": "cap-user",
+            },
+        )
+    notes = client.get("/profile/cap-user").json()["profile"].get("notes") or []
+    assert len(notes) <= MAX_NOTES, f"notes grew to {len(notes)}"
+    # The most recent survive, the oldest are dropped.
+    assert any(f"number {MAX_NOTES + 5}" in str(n) for n in notes)

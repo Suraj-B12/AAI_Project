@@ -48,9 +48,11 @@ SCRIPTS: dict[str, list[str]] = {
 }
 
 
-def already_seeded(graph: Any) -> bool:
+def already_seeded(graph: Any, skip: set[str] | None = None) -> bool:
     """True when the demo threads already have history."""
     for thread_id in SCRIPTS:
+        if skip and thread_id in skip:
+            continue
         try:
             snapshot = graph.get_state({"configurable": {"thread_id": thread_id}})
         except Exception:
@@ -60,19 +62,25 @@ def already_seeded(graph: Any) -> bool:
     return False
 
 
-def seed(graph: Any, force: bool = False) -> dict[str, int]:
+def seed(graph: Any, force: bool = False, skip: set[str] | None = None) -> dict[str, int]:
     """Replay the demo scripts. Returns turns run per thread.
+
+    ``skip`` names threads the user has deliberately deleted. Without it, a
+    deleted demo thread would quietly reappear on the next restart and the
+    delete would look like it had failed.
 
     Never raises: a seeding failure must not stop the server from starting.
     A blank app is a worse demo than an unseeded one, but a dead app is worse
     than both.
     """
-    if not force and already_seeded(graph):
+    if not force and already_seeded(graph, skip):
         log.info("demo threads already present; skipping seed")
         return {}
 
     done: dict[str, int] = {}
     for thread_id, script in SCRIPTS.items():
+        if skip and thread_id in skip:
+            continue
         config = {"configurable": {"thread_id": thread_id}}
         turns = 0
         for message in script:

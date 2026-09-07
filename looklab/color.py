@@ -118,6 +118,41 @@ MATCH_WEIGHTS: dict[str, float] = {
 SPREAD_ALPHA = 1.5
 
 
+# --------------------------------------------------------------------------
+# HSL colour families -- Lightroom's HSL / Colour Mixer panel
+# --------------------------------------------------------------------------
+#
+# Lightroom's HSL panel has eight named colour bands, and a photographer edits
+# each one's Hue, Saturation and Luminance separately. To give advice in those
+# terms we have to measure in those terms, so pixels are bucketed by hue into
+# the same eight families and each family's chroma, lightness and hue offset
+# are measured independently.
+#
+# The angles are CIELAB hue angles, MEASURED rather than assumed -- a colour
+# picker's "red" is not at LAB 0 degrees. These come from converting each
+# named colour and reading its hue back (see tests/test_domain.py).
+HSL_FAMILIES: dict[str, float] = {
+    "red": 31.0,
+    "orange": 66.0,
+    "yellow": 99.0,
+    "green": 142.0,
+    "aqua": 197.0,
+    "blue": 271.0,
+    "purple": 307.0,
+    "magenta": 331.0,
+}
+
+# A pixel must carry at least this much chroma to be assigned to a family.
+# Near-grey pixels have an essentially arbitrary hue, so letting them vote
+# would smear every family toward the image's average cast -- the same reason
+# the zone hue means are chroma-weighted.
+HSL_MIN_CHROMA = 6.0
+
+# A family needs at least this share of the frame before its statistics are
+# reported. Below it, advice would be based on a handful of pixels.
+HSL_MIN_COVERAGE = 0.01
+
+
 def circ_dist(h1: float, h2: float) -> float:
     """Shortest angular distance between two hue angles, in degrees (0..180)."""
     d = abs(float(h1) - float(h2)) % 360.0
@@ -187,9 +222,66 @@ def signature_from_array(rgb01: np.ndarray) -> dict[str, float]:
     out["clip_white"] = float((L > 99.0).mean())
     out["split"] = circ_dist(out["high_hue"], out["shadow_hue"])
 
-    # Not a feature -- diagnostic metadata. Every function that iterates a
-    # signature iterates FEATURE_NAMES explicitly, so extra keys are safe.
+    # Not features -- diagnostic metadata and HSL-panel measurements. Every
+    # function that iterates a signature iterates FEATURE_NAMES explicitly, so
+    # extra keys are safe and the tuned matcher is unaffected.
     out["zone_coverage"] = coverage  # type: ignore[assignment]
+    out["hsl"] = hsl_families(L, a, b, C, h)  # type: ignore[assignment]
+    return out
+
+
+def hsl_families(
+    L: np.ndarray, a: np.ndarray, b: np.ndarray, C: np.ndarray, h: np.ndarray
+) -> dict[str, dict[str, float]]:
+    """Per-colour-family statistics, in Lightroom's HSL vocabulary.
+
+    Each pixel with enough chroma is assigned to its nearest family centre,
+    and the family reports:
+
+    ``saturation``  mean chroma of its pixels -- the Saturation slider's axis
+    ``luminance``   mean L* -- the Luminance slider's axis
+    ``hue_shift``   signed offset from the family centre, in degrees, which is
+                    what the Hue slider moves
+    ``coverage``    share of the frame, so advice can be skipped for a family
+                    that barely appears
+
+    Grey pixels are excluded rather than assigned to whichever family their
+    noise happens to point at.
+    """
+    names = list(HSL_FAMILIES)
+    centres = np.array([HSL_FAMILIES[n] for n in names], dtype=np.float64)
+
+    strong = C >= HSL_MIN_CHROMA
+    out: dict[str, dict[str, float]] = {}
+    if not bool(strong.any()):
+        return {n: {"saturation": 0.0, "luminance": 0.0, "hue_shift": 0.0, "coverage": 0.0}
+                for n in names}
+
+    hs, Cs, Ls = h[strong], C[strong], L[strong]
+    # Circular distance from every strong pixel to every family centre.
+    diff = np.abs(hs[:, None] - centres[None, :]) % 360.0
+    diff = np.minimum(diff, 360.0 - diff)
+    nearest = np.argmin(diff, axis=1)
+    total = float(L.size)
+
+    for index, name in enumerate(names):
+        member = nearest == index
+        count = int(member.sum())
+        coverage = count / total
+        if count < MIN_ZONE_PIXELS or coverage < HSL_MIN_COVERAGE:
+            out[name] = {"saturation": 0.0, "luminance": 0.0, "hue_shift": 0.0,
+                         "coverage": round(coverage, 4)}
+            continue
+        # Signed circular offset from the centre, chroma-weighted like the
+        # zone hue means so the more saturated pixels dominate.
+        offset = (hs[member] - HSL_FAMILIES[name] + 180.0) % 360.0 - 180.0
+        weights = Cs[member]
+        out[name] = {
+            "saturation": round(float(Cs[member].mean()), 3),
+            "luminance": round(float(Ls[member].mean()), 3),
+            "hue_shift": round(float(np.average(offset, weights=weights)), 3),
+            "coverage": round(coverage, 4),
+        }
     return out
 
 
