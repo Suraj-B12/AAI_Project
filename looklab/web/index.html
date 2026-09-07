@@ -154,6 +154,21 @@
   }
   .drop.armed { border-color: var(--accent); color: var(--accent); }
   .drop .slot { display: flex; align-items: center; gap: 6px; }
+  .thumb {
+    width: 40px; height: 30px; object-fit: cover; border-radius: 4px;
+    border: 1px solid var(--line); display: none;
+  }
+  .thumb.on { display: inline-block; }
+  .measured img {
+    width: 100%; height: 62px; object-fit: cover; border-radius: 5px;
+    border: 1px solid var(--line); margin-bottom: 4px;
+  }
+  .measured .role {
+    font-family: var(--mono); font-size: 10.5px; color: var(--accent);
+    text-transform: uppercase; letter-spacing: 0.05em;
+  }
+  .measured .nums { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+  .measured .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 
   pre.mermaid-src {
     font-family: var(--mono); font-size: 10px; line-height: 1.35;
@@ -237,10 +252,12 @@
     <div class="drop" id="drop">
       <span class="slot">
         <button id="pickRef" type="button">reference image</button>
+        <img id="refThumb" class="thumb" alt="">
         <span id="refName">none</span>
       </span>
       <span class="slot">
         <button id="pickCur" type="button">your photo</button>
+        <img id="curThumb" class="thumb" alt="">
         <span id="curName">none</span>
       </span>
       <span class="slot"><button id="clearImgs" type="button">clear</button></span>
@@ -263,6 +280,17 @@
         Diagram text is emitted by the compiled graph object itself
         (<code>draw_mermaid()</code>), not drawn by hand. The
         <code>chat</code> branch runs no analysis node at all.
+      </p>
+    </div>
+
+    <div class="sec" id="measuredSec" hidden>
+      <h3>Measured images</h3>
+      <div id="measuredBox" class="measured"></div>
+      <p class="note">
+        Uploads are measured in CIELAB and the numbers are kept in
+        <code>state["images"]</code>; the pixels are discarded. That is why the
+        raw image never enters the message history &mdash; and why the
+        signature survives across turns without re-uploading.
       </p>
     </div>
 
@@ -427,6 +455,31 @@
     box.innerHTML = html;
   }
 
+  // Thumbnails of what was last sent, kept per thread so switching threads
+  // does not show another conversation's images.
+  var sentThumbs = {};
+
+  function renderMeasured(images, thumbs) {
+    var sec = document.getElementById("measuredSec");
+    var box = $("measuredBox");
+    var roles = ["reference", "current"].filter(function (r) { return images && images[r]; });
+    if (!roles.length) { sec.hidden = true; box.innerHTML = ""; return; }
+    sec.hidden = false;
+    box.innerHTML = "<div class='pair'>" + roles.map(function (r) {
+      var s = images[r];
+      var thumb = (thumbs && thumbs[r]) ? "<img src='" + esc(thumbs[r]) + "' alt='" + esc(r) + "'>" : "";
+      return "<div>" + thumb +
+        "<div class='role'>" + esc(r) + "</div>" +
+        "<div class='nums'>" +
+        "shadow hue " + Math.round(s.shadow_hue) + "&deg;<br>" +
+        "chroma " + (s.chroma || 0).toFixed(1) + "<br>" +
+        "contrast " + Math.round(s.contrast) + " L*<br>" +
+        "a* " + (s.a_global >= 0 ? "+" : "") + (s.a_global || 0).toFixed(1) +
+        " / b* " + (s.b_global >= 0 ? "+" : "") + (s.b_global || 0).toFixed(1) +
+        "</div></div>";
+    }).join("") + "</div>";
+  }
+
   function renderTelemetry(t) {
     t = t || {};
     $("mBefore").textContent = t.msgs_before || 0;
@@ -472,6 +525,7 @@
       renderLog(s.messages);
       renderRecipe(s.recipe);
       renderTelemetry(s.telemetry);
+      renderMeasured(s.images, sentThumbs[state.thread]);
       renderBranch(s.intent, s.branch ? branchNodeFor(s.branch) : null);
       $("threadMeta").textContent = s.exists
         ? (s.messages.length + " messages · " + s.recipe.length + " recipe steps")
@@ -509,6 +563,14 @@
     if (state.refB64) { body.reference_b64 = state.refB64; }
     if (state.curB64) { body.current_b64 = state.curB64; }
 
+    // Keep the previews so the "measured images" pane can show what was sent,
+    // even though the server only ever stores the numbers.
+    if (state.refB64 || state.curB64) {
+      sentThumbs[state.thread] = sentThumbs[state.thread] || {};
+      if (state.refB64) { sentThumbs[state.thread].reference = state.refB64; }
+      if (state.curB64) { sentThumbs[state.thread].current = state.curB64; }
+    }
+
     $("input").value = "";
     api("/chat", {
       method: "POST",
@@ -542,6 +604,10 @@
     state.refB64 = null; state.curB64 = null;
     $("refName").textContent = "none";
     $("curName").textContent = "none";
+    ["refThumb", "curThumb"].forEach(function (id) {
+      $(id).removeAttribute("src");
+      $(id).classList.remove("on");
+    });
     $("fileRef").value = ""; $("fileCur").value = "";
     $("drop").classList.remove("armed");
   }
@@ -596,18 +662,50 @@
   $("pickRef").onclick = function () { $("fileRef").click(); };
   $("pickCur").onclick = function () { $("fileCur").click(); };
   $("clearImgs").onclick = clearImages;
-  $("fileRef").addEventListener("change", function () {
-    var f = this.files[0]; if (!f) { return; }
-    readFile(f, function (d) {
-      state.refB64 = d; $("refName").textContent = f.name;
-      $("drop").classList.add("armed");
+  function attach(inputId, thumbId, nameId, assign) {
+    $(inputId).addEventListener("change", function () {
+      var f = this.files[0];
+      if (!f) { return; }
+      if (f.size > 12 * 1024 * 1024) {
+        showError('"' + f.name + '" is ' + (f.size / 1048576).toFixed(1) +
+                  "MB. The limit is 12MB — please pick a smaller image.");
+        this.value = "";
+        return;
+      }
+      readFile(f, function (d) {
+        assign(d);
+        $(nameId).textContent = f.name.length > 18 ? f.name.slice(0, 17) + "…" : f.name;
+        $(thumbId).src = d;
+        $(thumbId).classList.add("on");
+        $("drop").classList.add("armed");
+        showError("");
+      });
+    });
+  }
+  attach("fileRef", "refThumb", "refName", function (d) { state.refB64 = d; });
+  attach("fileCur", "curThumb", "curName", function (d) { state.curB64 = d; });
+
+  // Drag and drop straight onto the strip: dropping one image fills the
+  // reference slot, dropping a second fills "your photo".
+  var dropZone = $("drop");
+  ["dragenter", "dragover"].forEach(function (ev) {
+    dropZone.addEventListener(ev, function (e) {
+      e.preventDefault(); dropZone.classList.add("armed");
     });
   });
-  $("fileCur").addEventListener("change", function () {
-    var f = this.files[0]; if (!f) { return; }
-    readFile(f, function (d) {
-      state.curB64 = d; $("curName").textContent = f.name;
-      $("drop").classList.add("armed");
+  dropZone.addEventListener("dragleave", function () {
+    if (!state.refB64 && !state.curB64) { dropZone.classList.remove("armed"); }
+  });
+  dropZone.addEventListener("drop", function (e) {
+    e.preventDefault();
+    var files = [].slice.call(e.dataTransfer.files).filter(function (f) {
+      return f.type.indexOf("image/") === 0;
+    });
+    files.slice(0, 2).forEach(function (f, i) {
+      var target = (!state.refB64 && i === 0) ? "fileRef" : "fileCur";
+      var dt = new DataTransfer(); dt.items.add(f);
+      $(target).files = dt.files;
+      $(target).dispatchEvent(new Event("change", { bubbles: true }));
     });
   });
 

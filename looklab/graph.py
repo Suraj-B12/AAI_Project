@@ -134,6 +134,20 @@ CRITIQUE_CUES = ("wrong", "critique", "feedback", "review", "check my", "what's 
                  "whats off", "improve", "too much", "any issues")
 
 
+def has_role(images: dict | None, role: str) -> bool:
+    """Is an image present for ``role``, measured OR still pending?
+
+    Both forms must count. The router runs BEFORE the analyze nodes, so at
+    routing time an upload is still sitting under ``_pending_<role>`` and the
+    measured ``<role>`` key does not exist yet. Checking only the measured key
+    meant that uploading images with a message carrying no keyword -- "here you
+    go", "have a look at these" -- fell through to the chat branch and the
+    images were silently discarded.
+    """
+    images = images or {}
+    return bool(images.get(role) is not None or images.get(f"_pending_{role}") is not None)
+
+
 def classify_intent(text: str, images: dict | None) -> Intent:
     """Deterministic rules first. No model, no network, works offline.
 
@@ -143,8 +157,8 @@ def classify_intent(text: str, images: dict | None) -> Intent:
     """
     text = (text or "").lower()
     images = images or {}
-    has_ref = "reference" in images
-    has_cur = "current" in images
+    has_ref = has_role(images, "reference")
+    has_cur = has_role(images, "current")
 
     if any(cue in text for cue in IDENTIFY_CUES):
         return "identify"

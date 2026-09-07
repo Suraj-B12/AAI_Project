@@ -113,10 +113,76 @@ def test_t1_router_is_deterministic_and_offline(text, expected):
 
 
 def test_t1_router_falls_back_to_uploaded_roles():
-    assert classify_intent("here you go", {"reference": {}, "current": {}}) == "achieve"
-    assert classify_intent("here you go", {"reference": {}}) == "identify"
-    assert classify_intent("here you go", {"current": {}}) == "critique"
+    """Both state shapes must route the same way.
+
+    This test used to pass only the MEASURED shape -- {"reference": {}} -- and
+    that gave false confidence: the router runs before the analyze nodes, so at
+    routing time an upload is still under "_pending_reference" and the measured
+    key does not exist. Uploading images with a message carrying no keyword
+    therefore fell through to chat and the images were silently discarded.
+    See test_t1_uploads_route_correctly_without_a_keyword for the end-to-end
+    version, which is the one that would have caught it.
+    """
+    for ref, cur in (("reference", "current"), ("_pending_reference", "_pending_current")):
+        assert classify_intent("here you go", {ref: {}, cur: {}}) == "achieve"
+        assert classify_intent("here you go", {ref: {}}) == "identify"
+        assert classify_intent("here you go", {cur: {}}) == "critique"
     assert classify_intent("here you go", {}) == "chat"
+    # A role explicitly present-but-empty must not count as an upload.
+    assert classify_intent("here you go", {"_pending_reference": None}) == "chat"
+
+
+@pytest.mark.parametrize(
+    "message,use_ref,use_cur,expected",
+    [
+        # No keyword at all -- routing must come from what was uploaded.
+        ("here you go", True, True, "achieve"),
+        ("have a look at these", True, True, "achieve"),
+        ("hey", True, False, "identify"),
+        ("hmm", False, True, "critique"),
+        # A keyword still wins when it is present.
+        ("what look is this?", True, False, "identify"),
+        # Nothing uploaded and nothing said -> the branch that runs no tool.
+        ("hello there", False, False, "chat"),
+    ],
+)
+def test_t1_uploads_route_correctly_without_a_keyword(app, message, use_ref, use_cur, expected):
+    """End-to-end: an upload must be measured even with a conversational message.
+
+    Regression for a bug that reached production. classify_intent was only
+    checking the measured "reference"/"current" keys, but the router runs
+    BEFORE the analyze nodes, so at that moment the upload is still under
+    "_pending_reference". Anything without a keyword routed to chat and the
+    uploaded image was silently thrown away -- the app looked like image
+    upload was broken while returning HTTP 200.
+    """
+    import io as _io
+
+    from PIL import Image
+
+    from looklab.plates import PLATE_NAMES, base_plate
+
+    def _jpeg():
+        arr = (base_plate(PLATE_NAMES[0], 128) * 255).astype("uint8")
+        buf = _io.BytesIO()
+        Image.fromarray(arr).save(buf, format="JPEG")
+        return buf.getvalue()
+
+    result = say(
+        app,
+        message,
+        thread=f"upload-{expected}-{use_ref}-{use_cur}",
+        reference_bytes=_jpeg() if use_ref else None,
+        current_bytes=_jpeg() if use_cur else None,
+    )
+    assert result["intent"] == expected
+
+    # Whatever was uploaded must actually have been measured into state.
+    measured = {k for k, v in (result.get("images") or {}).items() if not k.startswith("_")}
+    if use_ref:
+        assert "reference" in measured, "the reference image was never measured"
+    if use_cur:
+        assert "current" in measured, "the current image was never measured"
 
 
 def test_t1_select_branch_reads_intent_not_recomputes():
