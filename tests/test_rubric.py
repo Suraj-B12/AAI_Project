@@ -454,12 +454,15 @@ def test_jsonable_casts_numpy():
 
 def test_no_message_carries_image_bytes(app):
     """Image data lives in the images channel, never in message content."""
-    from looklab.plates import base_plate
     import io as _io
 
     from PIL import Image
 
-    arr = (base_plate("astronaut", 128) * 255).astype("uint8")
+    from looklab.plates import PLATE_NAMES, base_plate
+
+    # PLATE_NAMES[0], not a hardcoded scikit-image sample name -- scikit-image
+    # is an optional dev dependency and is absent in a production install.
+    arr = (base_plate(PLATE_NAMES[0], 128) * 255).astype("uint8")
     buf = _io.BytesIO()
     Image.fromarray(arr).save(buf, format="JPEG")
     raw = buf.getvalue()

@@ -1,0 +1,10 @@
+# Development and verification extras, on top of requirements.txt.
+#
+# scikit-image is here rather than in the runtime requirements purely so
+# tests/test_cielab.py can assert that looklab/cielab.py agrees with it
+# bit-for-bit. Nothing in the running application imports it.
+-r requirements.txt
+pytest==9.1.1
+httpx==0.28.1
+scikit-image==0.25.2
+psutil==7.1.4

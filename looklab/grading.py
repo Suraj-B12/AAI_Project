@@ -146,7 +146,8 @@ def _wheel_table() -> list[tuple[float, float]]:
     global _WHEEL_TABLE
     if _WHEEL_TABLE is None:
         import numpy as _np
-        from skimage.color import rgb2lab
+
+        from .cielab import rgb2lab
 
         table = []
         for wheel in range(0, 360, 5):

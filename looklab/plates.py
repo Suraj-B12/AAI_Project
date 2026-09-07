@@ -66,8 +66,22 @@ def _resize(rgb01: np.ndarray, max_side: int) -> np.ndarray:
 
 
 def _load_sample(name: str) -> np.ndarray:
-    """Load a scikit-image sample photograph as float RGB in [0, 1]."""
-    import skimage.data as data
+    """Load a scikit-image sample photograph as float RGB in [0, 1].
+
+    scikit-image is an OPTIONAL dependency and is not in requirements.txt.
+    It is only reachable on the fallback path, when the downloaded plates are
+    missing -- and they ship in the repository, so a normal clone never gets
+    here. Keeping the import local means a deployment that installs only the
+    runtime requirements starts fine without it.
+    """
+    try:
+        import skimage.data as data
+    except ImportError as exc:  # pragma: no cover - only without the plates
+        raise RuntimeError(
+            f"plate {name!r} needs either looklab/data/plates (shipped in the repo, "
+            f"rebuild with `python -m tools.fetch_plates`) or scikit-image installed "
+            f"for the bundled fallback samples"
+        ) from exc
 
     arr = np.asarray(getattr(data, name)())
     if arr.ndim == 2:

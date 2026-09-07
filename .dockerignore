@@ -1,0 +1,15 @@
+.venv/
+.venv-slim/
+.git/
+.github/
+.pytest_cache/
+__pycache__/
+*.py[cod]
+tests/
+data/*.sqlite*
+.env
+.env.local
+.claude/
+council_verdict.txt
+looklab-design.md
+looklab/data/tiktoken/

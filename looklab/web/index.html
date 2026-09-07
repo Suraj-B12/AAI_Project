@@ -326,8 +326,10 @@
   "use strict";
 
   var state = {
+    // Populated from GET /threads at boot, so the seeded demo threads appear
+    // without the UI having to hardcode their names.
     thread: "default",
-    threads: ["default", "moody"],
+    threads: ["default"],
     budget: 800,
     refB64: null,
     curB64: null,
@@ -610,6 +612,26 @@
   });
 
   // ---- boot -------------------------------------------------------------
+  function loadThreadList() {
+    return api("/threads?user_id=" + encodeURIComponent($("userId").value.trim() || "suraj"))
+      .then(function (d) {
+        var names = (d.threads || []).map(function (t) { return t.thread_id; })
+          .filter(function (n) { return n && n.indexOf("stress-") !== 0 && n.indexOf("api-") !== 0; });
+        names.forEach(function (n) {
+          if (state.threads.indexOf(n) < 0) { state.threads.push(n); }
+        });
+        // Prefer a seeded thread over the empty default, so the first paint
+        // already shows a recipe, a profile and real trim telemetry.
+        if (names.length && state.threads.indexOf("default") === 0 && state.thread === "default") {
+          state.thread = names[0];
+          $("threadName").textContent = state.thread;
+        }
+        renderThreads();
+        return loadThread();
+      })
+      .catch(function () { renderThreads(); });
+  }
+
   renderExamples();
   renderThreads();
   $("threadName").textContent = state.thread;
@@ -694,7 +716,7 @@
 
   $("glossaryQ").addEventListener("input", function () { renderGlossary(this.value); });
 
-  loadThread();
+  loadThreadList();
   loadProfile();
   loadModels();
 })();

@@ -219,8 +219,13 @@ def test_wheel_hue_conversion_is_not_the_identity():
 
 
 def test_wheel_hue_conversion_round_trips_through_the_simulator():
-    """Dialling in the recommended wheel value should reproduce the LAB hue."""
-    from skimage.color import rgb2lab
+    """Dialling in the recommended wheel value should reproduce the LAB hue.
+
+    Uses looklab's own rgb2lab rather than scikit-image's, so this runs in a
+    production install. tests/test_cielab.py separately proves the two agree
+    bit-for-bit, so nothing is lost by not calling the reference here.
+    """
+    from looklab.cielab import rgb2lab
     from looklab.grading import _hue_to_unit_rgb
 
     for wheel in (30, 90, 200, 300):

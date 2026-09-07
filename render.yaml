@@ -1,0 +1,21 @@
+# Render blueprint. Deploy with: New -> Blueprint -> point at this repo.
+#
+# One service. The front end is a single HTML file served by FastAPI at "/",
+# so there is no separate static site to deploy and no CORS to configure.
+services:
+  - type: web
+    name: looklab
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    autoDeployTrigger: commit
+    envVars:
+      # Render injects PORT itself; the Dockerfile's CMD reads it.
+      - key: LOOKLAB_MODEL
+        value: demo          # deterministic narrator; no API key needed
+      - key: LOOKLAB_SEED
+        value: "1"           # populate two demo threads on cold start
+      # Optional: to enable Gemini narration, set LOOKLAB_MODEL=google in the
+      # Render dashboard and add GEMINI_API_KEYS as a SECRET there.
+      # Never commit keys to this file -- it is public.

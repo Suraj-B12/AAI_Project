@@ -27,7 +27,8 @@ from typing import Any, Iterable
 
 import numpy as np
 from PIL import Image
-from skimage.color import rgb2lab
+
+from .cielab import rgb2lab
 
 # L* zone boundaries. L* runs 0..100, so these are perceptual thirds.
 ZONES: dict[str, tuple[float, float]] = {
@@ -73,9 +74,6 @@ CIRCULAR_FEATURES = frozenset(
 # shadow_hue and high_hue score lowest (most grade-driven), the mid_* features
 # highest (most subject-driven).
 #
-# The first eight are the design document's original set. The remainder were
-# added after measurement: including them lifts top-1 identification accuracy
-# from 60% to 84% across the 45-frame library. See tools/calibrate.py.
 # Selected by ``tools/tune_matcher.py``: leave-2-plates-out cross-validation
 # over the eight knowledge-base plates (28 folds), with a one-standard-error
 # rule. Held-out plates were never consulted during selection and are scored

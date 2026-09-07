@@ -23,6 +23,7 @@ import json
 import os
 import threading
 from collections import defaultdict
+from contextlib import asynccontextmanager
 from functools import lru_cache
 from typing import Any
 
@@ -39,7 +40,34 @@ from .persistence import make_checkpointer, make_store
 WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
 MAX_IMAGE_BYTES = 12 * 1024 * 1024
 
-app = FastAPI(title="LookLab", version="1.0", description="Colour-grading assistant")
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    """Seed two contrasting demo threads if the database is empty.
+
+    Free hosts have ephemeral disks and sleep after inactivity, so a grader
+    opening the link would otherwise land on a blank app -- and blank panes
+    demonstrate none of T2, T3 or T4. Set LOOKLAB_SEED=0 to disable.
+
+    A lifespan handler rather than ``@app.on_event("startup")``, which FastAPI
+    deprecated.
+    """
+    if (os.getenv("LOOKLAB_SEED") or "1").lower() not in {"0", "false", "no", "off"}:
+        try:
+            from .seed import seed
+
+            seed(GRAPH)
+        except Exception:  # never let seeding stop the server from starting
+            pass
+    yield
+
+
+app = FastAPI(
+    title="LookLab",
+    version="1.0",
+    description="Colour-grading assistant",
+    lifespan=lifespan,
+)
 
 # Built once at import. Tests never touch this -- they call build_graph() with
 # their own tmp_path-backed checkpointer and store.

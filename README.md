@@ -26,9 +26,18 @@ Open <http://127.0.0.1:8077>. No API key, no network and no build step are
 required — the knowledge base is committed and the narrator is deterministic.
 
 ```bash
-pytest -q                       # 108 tests
+pip install -r requirements-dev.txt
+pytest -q                       # 129 tests
 python -m tools.stress          # 49 load / fuzz / soak checks against a live server
 python -m tools.calibrate       # the evaluation table below
+```
+
+To deploy it somewhere your marker can open, see **[DEPLOY.md](DEPLOY.md)**.
+Short version: it is one container — the front end is a single HTML file that
+FastAPI serves at `/`, so there is nothing to deploy separately.
+
+```bash
+docker build -t looklab . && docker run -p 8077:8077 -e PORT=8077 looklab
 ```
 
 ---
@@ -191,6 +200,38 @@ changes its image source and the schema stays identical.
 
 ---
 
+## Deployment size
+
+Deploying to a free tier makes install size and cold-start time matter, so the
+one heavy dependency was removed rather than tolerated.
+
+`scikit-image` was used for exactly one function, `rgb2lab`, and it pulls in
+`scipy`. Together they were **143 MB of a 206 MB install** — 70% of the
+deployment for one colour-space conversion. `looklab/cielab.py` now implements
+that conversion in about forty lines of numpy.
+
+| | full | slim |
+|---|---|---|
+| `site-packages` | 319.5 MB | **125.8 MB** (61% smaller) |
+| Runtime RSS | ~143 MB | ~143 MB |
+| Cold start | ~2 s | ~2 s |
+
+Replacing a reference implementation with your own is only defensible if you
+can show they agree, so `tests/test_cielab.py` asserts **bit-for-bit equality**
+with scikit-image — max difference exactly `0.000e+00` across the sRGB cube,
+the greyscale ramp, both piecewise knees, random images and every base plate.
+That required matching scikit-image's *legacy rounded* CIE constants (0.008856
+and 7.787) rather than the exact fractions; using the exact values shifts L\* by
+1.6e-4, which is invisible in a photograph but would have turned a proof into
+an approximation and silently invalidated the committed knowledge base.
+
+scikit-image remains in `requirements-dev.txt` purely so that equivalence test
+can run. Nothing in the running application imports it, and
+`test_signature_pipeline_still_works_without_skimage` blocks the import to
+prove it.
+
+---
+
 ## Data provenance
 
 **Base plates** — 16 photographs from Wikimedia Commons, fetched by
@@ -254,7 +295,7 @@ slider value is structurally impossible.
 ## Testing
 
 ```
-pytest -q                    108 passed
+pytest -q                    129 passed
 python -m tools.stress        49/49 checks passed
 ```
 
@@ -308,6 +349,7 @@ looklab/
 ├── context.py      filter + trim + telemetry                 (T3)
 ├── memory.py       profile extraction and store access       (T4)
 ├── persistence.py  SqliteSaver / SqliteStore construction    (T2, T4)
+├── cielab.py       sRGB -> CIELAB in pure numpy (replaces scikit-image)
 ├── color.py        CIELAB signature, distance, matching
 ├── grading.py      numpy Lightroom-slider simulator
 ├── rules.py        delta -> slider steps, fault checks
@@ -316,6 +358,7 @@ looklab/
 ├── plates.py       base plates and the train/test split
 ├── llm.py          DemoChatModel + optional Gemini narrator
 ├── gemini.py       multi-key pool with rotation and failover
+├── seed.py         two demo threads, replayed on cold start
 ├── server.py       FastAPI
 ├── kb.json         built by tools/build_kb.py
 ├── knowledge.json  built by tools/fetch_knowledge.py
@@ -332,6 +375,7 @@ tools/
 tests/
 ├── test_rubric.py  T1-T4, named to map onto the rubric
 ├── test_api.py     HTTP-level, including concurrency
+├── test_cielab.py  proves cielab.py matches scikit-image bit-for-bit
 └── test_domain.py  colour engine, simulator, KB, rules
 ```
 
@@ -350,3 +394,4 @@ tests/
 | GET | `/plates` | base-plate provenance and licences |
 | GET | `/models` | narrator status and per-key Gemini health |
 | GET | `/health` | liveness and configuration |
+| GET | `/threads` | thread list, used by the switcher |

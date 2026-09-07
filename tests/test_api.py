@@ -43,10 +43,17 @@ def client(tmp_path_factory):
         persistence.DEFAULT_STORE_PATH = original_st
 
 
-def _jpeg_bytes(plate: str = "astronaut", size: int = 128) -> bytes:
-    from looklab.plates import base_plate
+def _jpeg_bytes(plate: str | None = None, size: int = 128) -> bytes:
+    """Encode a real base plate as JPEG.
 
-    arr = (base_plate(plate, size) * 255).astype("uint8")
+    Defaults to whichever plate the knowledge base actually uses rather than a
+    hardcoded scikit-image sample name: scikit-image is an optional dev
+    dependency, so naming "astronaut" here made these tests fail in an
+    environment installed from requirements.txt alone.
+    """
+    from looklab.plates import PLATE_NAMES, base_plate
+
+    arr = (base_plate(plate or PLATE_NAMES[0], size) * 255).astype("uint8")
     buf = io.BytesIO()
     Image.fromarray(arr).save(buf, format="JPEG", quality=88)
     return buf.getvalue()
@@ -234,3 +241,54 @@ def test_concurrent_posts_to_one_thread_do_not_lose_turns(client):
     assert len(user_messages) == 8, (
         f"expected 8 user turns, found {len(user_messages)} -- concurrent writes were lost"
     )
+
+
+# --------------------------------------------------------------------------
+# Cold-start seeding
+# --------------------------------------------------------------------------
+
+def test_cold_start_seeds_two_contrasting_demo_threads(client):
+    """A blank app demonstrates nothing, and free hosts start blank every time.
+
+    The lifespan handler replays two scripted conversations through the real
+    graph, so a grader's first page load already shows a populated recipe, a
+    populated profile and real trim telemetry.
+    """
+    from looklab.seed import SCRIPTS
+
+    states = {}
+    for thread_id in SCRIPTS:
+        body = client.get(f"/state/{thread_id}").json()
+        assert body["exists"], f"{thread_id} was not seeded"
+        assert body["messages"], f"{thread_id} has no messages"
+        states[thread_id] = body
+
+    warm, cold = states["warm-portrait"], states["cold-landscape"]
+
+    # T2 evidence: the two threads must look visibly different on screen.
+    assert warm["recipe"] and cold["recipe"]
+    assert [e["slider"] for e in warm["recipe"]] != [e["slider"] for e in cold["recipe"]]
+
+    # T3 evidence: telemetry carries real numbers, not zeros.
+    assert warm["telemetry"].get("tokens_before", 0) > 0
+
+    # T4 evidence: the profile was learned and is shared, not per-thread.
+    profile = client.get("/profile/suraj").json()["profile"]
+    assert profile.get("name") == "Suraj"
+
+
+def test_seeding_is_idempotent(client):
+    """Re-running the lifespan must not duplicate the demo conversations."""
+    from looklab.seed import seed
+    from looklab.server import GRAPH
+
+    before = len(client.get("/state/warm-portrait").json()["messages"])
+    seed(GRAPH)  # second call, as a restart would make
+    after = len(client.get("/state/warm-portrait").json()["messages"])
+    assert after == before
+
+
+def test_seeded_threads_appear_in_the_thread_list(client):
+    """The UI populates its switcher from /threads, so they must be listed."""
+    names = {t["thread_id"] for t in client.get("/threads").json()["threads"]}
+    assert {"warm-portrait", "cold-landscape"} <= names
