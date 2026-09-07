@@ -166,7 +166,20 @@ def classify_intent(text: str, images: dict | None) -> Intent:
         return "achieve"
     if any(cue in text for cue in CRITIQUE_CUES):
         return "critique"
-    # No verbal cue -- fall back to what was uploaded this turn.
+
+    # An explicit "remember that ..." goes to chat, so the reply confirms the
+    # save. Checked AFTER the task cues, so "remember the teal look? how do I
+    # get it?" is still treated as a request for advice -- but BEFORE the
+    # upload fallback, because the images channel persists across turns and
+    # would otherwise send every later keyword-less message down the achieve
+    # branch. Saying "remember I shoot on a Nikon" in a thread that happens to
+    # contain images used to return slider advice.
+    from .memory import explicit_save_request
+
+    if explicit_save_request(text):
+        return "chat"
+
+    # No verbal cue -- fall back to what was uploaded.
     if has_ref and has_cur:
         return "achieve"
     if has_cur:
@@ -530,8 +543,13 @@ def node_save_profile(state: LookState, *, store: BaseStore) -> dict:
         return {}
     user_id = state.get("user_id") or "suraj"
     save_profile_facts(store, user_id, facts)
-    merged = {**(state.get("profile") or {}), **facts}
-    return {"profile": merged}
+
+    # Re-read rather than merging `facts` into the old profile. The two are not
+    # the same shape: an explicit "remember that ..." arrives as the internal
+    # key `_note` and is stored by appending to a capped `notes` LIST. Merging
+    # the raw facts would leave `_note` sitting in state and in the UI, showing
+    # a different profile from the one actually persisted.
+    return {"profile": load_profile(store, user_id)}
 
 
 # --------------------------------------------------------------------------

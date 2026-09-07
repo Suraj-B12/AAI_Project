@@ -551,3 +551,42 @@ def test_graph_builds_without_a_checkpointer_or_store():
     """The graph must compile standalone, for the mermaid/docs path."""
     app = build_graph()
     assert "graph TD" in mermaid(app)
+
+
+def test_t4_remember_beats_a_stale_upload(app):
+    """"Remember that ..." must confirm the save, even in an image thread.
+
+    Regression. The images channel persists across turns on purpose -- turn 2
+    of "make it warmer than the reference" needs it -- but that meant any later
+    message without a task keyword hit the upload fallback and routed to
+    achieve. Asking the app to remember something in a thread that happened to
+    contain images returned slider advice instead of a confirmation, while
+    silently saving the fact anyway.
+    """
+    import io as _io
+
+    from PIL import Image
+
+    from looklab.plates import PLATE_NAMES, base_plate
+
+    buf = _io.BytesIO()
+    Image.fromarray((base_plate(PLATE_NAMES[0], 128) * 255).astype("uint8")).save(
+        buf, format="JPEG"
+    )
+    raw = buf.getvalue()
+
+    say(app, "here you go", thread="mem-imgs", reference_bytes=raw, current_bytes=raw)
+    result = say(app, "remember that I print everything on matte paper", thread="mem-imgs")
+
+    assert result["intent"] == "chat", "an explicit save must not route to achieve"
+    reply = result["messages"][-1].content.lower()
+    assert "matte paper" in reply and ("saved" in reply or "remember" in reply)
+    assert any(
+        "matte paper" in str(n).lower() for n in (result["profile"].get("notes") or [])
+    )
+
+
+def test_t1_a_task_keyword_still_beats_remember(app):
+    """"remember the teal look? how do I get it" is a request for advice."""
+    result = say(app, "remember the teal and orange look? how do i get it?", thread="mem-vs")
+    assert result["intent"] == "achieve"
