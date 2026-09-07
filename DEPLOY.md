@@ -154,10 +154,21 @@ The app is fully functional without any API key — the deterministic narrator
 composes every sentence from computed values. To use Gemini for the prose:
 
 1. Render dashboard → your service → **Environment**.
-2. Add `LOOKLAB_MODEL` = `google` (an **Environment Variable**).
-3. Add `GEMINI_API_KEYS` = `key1,key2,key3` as a **Secret**, not a plain
-   variable.
-4. **Save, rebuild**.
+2. Under **Environment Variables**, add `LOOKLAB_MODEL` = `google`.
+3. Under **Environment Variables** (not Secret Files), add
+   `GEMINI_API_KEYS` = `key1,key2,key3` — comma separated, no spaces needed.
+4. **Save, rebuild, and deploy**.
+
+Render's **Secret Files** section also works if you prefer it: name the file
+`GEMINI_API_KEYS` and put the keys in it, one per line or comma separated.
+`looklab/gemini.py` checks `/etc/secrets/GEMINI_API_KEYS` and the app root as
+well as the environment. But an Environment Variable is simpler, and it is the
+one that fails least often — a secret file left empty looks identical to a
+correctly configured one.
+
+**Check it worked:** `curl https://<your-app>.onrender.com/models`. You want a
+`gemini` block with `keys_usable` matching how many keys you set. If you still
+see `"narrator": "DemoChatModel"`, the keys did not reach the process.
 
 **Never put keys in `render.yaml` or any committed file** — this repository is
 public. `.env` is gitignored for the same reason.

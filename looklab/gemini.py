@@ -25,6 +25,7 @@ from __future__ import annotations
 import json
 import os
 import random
+import re
 import threading
 import time
 import urllib.error
@@ -108,28 +109,68 @@ class KeyHealth:
         }
 
 
-def load_keys() -> list[str]:
-    """Read keys from the environment, falling back to a local .env file.
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-    ``.env`` is gitignored. Keys must never be committed, and nothing in this
-    module writes them anywhere.
+# Places a deployment might put the keys, tried in order. Supporting all of
+# them is not indulgence: hosting panels offer "environment variable" and
+# "secret file" side by side, they look interchangeable, and choosing the
+# wrong one fails silently -- the app just quietly falls back to the offline
+# narrator with no error anywhere.
+#
+# Render mounts a secret file both at the app root and under /etc/secrets,
+# named exactly as you named it in the dashboard.
+KEY_FILE_CANDIDATES: tuple[str, ...] = (
+    os.path.join(ROOT, ".env"),
+    os.path.join(ROOT, "GEMINI_API_KEYS"),
+    "/etc/secrets/GEMINI_API_KEYS",
+    "/etc/secrets/.env",
+    "/run/secrets/GEMINI_API_KEYS",
+)
+
+
+def _keys_from_file(path: str) -> str:
+    """Read keys from a file that is either a bare list or dotenv-style.
+
+    A secret file may contain just the comma-separated keys, or a full
+    ``GEMINI_API_KEYS=...`` line. Both are accepted, and ``#`` comments and
+    surrounding quotes are stripped, because a copy-paste into a web textarea
+    picks up all of those.
+    """
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            text = fh.read()
+    except OSError:
+        return ""
+
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.upper().startswith(("GEMINI_API_KEYS=", "GOOGLE_API_KEY=")):
+            return line.split("=", 1)[1].strip().strip("\"'")
+    # No assignment found: treat the whole file as the value.
+    return " ".join(
+        ln.strip() for ln in text.splitlines() if ln.strip() and not ln.strip().startswith("#")
+    ).strip().strip("\"'")
+
+
+def load_keys() -> list[str]:
+    """Read keys from the environment, then from any known secret-file path.
+
+    Nothing here writes a key anywhere, and no key is ever logged.
     """
     raw = os.getenv("GEMINI_API_KEYS") or os.getenv("GOOGLE_API_KEY") or ""
     if not raw:
-        env_path = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env"
-        )
-        if os.path.exists(env_path):
-            try:
-                with open(env_path, "r", encoding="utf-8") as fh:
-                    for line in fh:
-                        line = line.strip()
-                        if line.startswith("GEMINI_API_KEYS="):
-                            raw = line.split("=", 1)[1]
-                            break
-            except OSError:
-                raw = ""
-    return [k.strip() for k in raw.split(",") if k.strip()]
+        for path in KEY_FILE_CANDIDATES:
+            if os.path.exists(path):
+                raw = _keys_from_file(path)
+                if raw:
+                    break
+
+    # Split on commas, whitespace or newlines: pasting ten keys into a textarea
+    # produces newlines about as often as commas.
+    parts = re.split(r"[,\s]+", raw or "")
+    return [k.strip().strip("\"'") for k in parts if k.strip().strip("\"'")]
 
 
 class GeminiPool:

@@ -422,3 +422,63 @@ def test_notes_do_not_grow_without_bound(client):
     assert len(notes) <= MAX_NOTES, f"notes grew to {len(notes)}"
     # The most recent survive, the oldest are dropped.
     assert any(f"number {MAX_NOTES + 5}" in str(n) for n in notes)
+
+
+# --------------------------------------------------------------------------
+# Where the Gemini keys are read from
+# --------------------------------------------------------------------------
+
+@pytest.mark.parametrize(
+    "contents,expected",
+    [
+        ("AQ.key1,AQ.key2,AQ.key3", 3),                      # bare comma list
+        ("AQ.key1\nAQ.key2\nAQ.key3", 3),                    # one per line
+        ("GEMINI_API_KEYS=AQ.key1,AQ.key2", 2),              # dotenv style
+        ('# note\nGEMINI_API_KEYS="AQ.key1,AQ.key2"\n', 2),  # comment + quotes
+        ("AQ.key1, AQ.key2 , AQ.key3", 3),                   # sloppy spacing
+        ("AQ.key1,AQ.key2\n", 2),                            # trailing newline
+        ("", 0),
+        ("# only a comment\n", 0),
+    ],
+)
+def test_keys_parse_from_a_secret_file(tmp_path, monkeypatch, contents, expected):
+    """A hosting panel's "secret file" is a file, not an environment variable.
+
+    Render offers both side by side and they look interchangeable. Picking the
+    wrong one fails silently -- the app just falls back to the offline narrator
+    with nothing logged -- so both are supported, in whichever format the value
+    was pasted in.
+    """
+    import looklab.gemini as gem
+
+    monkeypatch.delenv("GEMINI_API_KEYS", raising=False)
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+
+    secret = tmp_path / "GEMINI_API_KEYS"
+    secret.write_text(contents, encoding="utf-8")
+    monkeypatch.setattr(gem, "KEY_FILE_CANDIDATES", (str(secret),))
+
+    assert len(gem.load_keys()) == expected
+
+
+def test_environment_variable_beats_a_secret_file(tmp_path, monkeypatch):
+    import looklab.gemini as gem
+
+    secret = tmp_path / "GEMINI_API_KEYS"
+    secret.write_text("AQ.fromfile", encoding="utf-8")
+    monkeypatch.setattr(gem, "KEY_FILE_CANDIDATES", (str(secret),))
+    monkeypatch.setenv("GEMINI_API_KEYS", "AQ.fromenv1,AQ.fromenv2")
+
+    assert gem.load_keys() == ["AQ.fromenv1", "AQ.fromenv2"]
+
+
+def test_no_keys_anywhere_is_not_an_error(tmp_path, monkeypatch):
+    """A missing key must degrade to the offline narrator, never raise."""
+    import looklab.gemini as gem
+
+    monkeypatch.delenv("GEMINI_API_KEYS", raising=False)
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    monkeypatch.setattr(gem, "KEY_FILE_CANDIDATES", (str(tmp_path / "nope"),))
+
+    assert gem.load_keys() == []
+    assert gem.GeminiPool([]).usable == 0
