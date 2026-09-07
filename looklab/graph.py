@@ -133,6 +133,22 @@ ACHIEVE_CUES = ("how do i", "how to get", "how would i", "achieve", "recreate", 
 CRITIQUE_CUES = ("wrong", "critique", "feedback", "review", "check my", "what's off",
                  "whats off", "improve", "too much", "any issues")
 
+# "Suggest me something" -- no image, no named look, just a request for a
+# recommendation. These reach the identify branch so the answer can be built
+# from the stored profile instead of the generic chat acknowledgement.
+SUGGEST_CUES = ("what should i try", "what should i use", "what do you recommend",
+                "recommend", "any suggestions", "suggest", "what next",
+                "what would suit", "ideas for")
+
+# Questions ABOUT the stored memory rather than instructions to change it.
+# Without these, "what do you know about me?" fell through to the generic chat
+# reply, which re-listed the profile as though the user had just supplied it --
+# answering a question nobody asked and never actually answering this one.
+RECALL_CUES = ("what do you know about me", "what do you remember", "what have you saved",
+               "what's in my profile", "whats in my profile", "my profile",
+               "what do you have on me", "what have you learned about me",
+               "do you remember", "what did i tell you")
+
 
 def has_role(images: dict | None, role: str) -> bool:
     """Is an image present for ``role``, measured OR still pending?
@@ -160,7 +176,19 @@ def classify_intent(text: str, images: dict | None) -> Intent:
     has_ref = has_role(images, "reference")
     has_cur = has_role(images, "current")
 
+    # A question about what is stored is answered from the profile, not by
+    # running any analysis. Checked first because "what do you remember about
+    # the teal look" would otherwise be caught by an ACHIEVE cue.
+    if any(cue in text for cue in RECALL_CUES):
+        return "chat"
+
     if any(cue in text for cue in IDENTIFY_CUES):
+        return "identify"
+    # "What should I try?" is a request for a recommendation, and the only
+    # thing that can answer it is the stored profile. Placed before the ACHIEVE
+    # cues because "what do you recommend I do" contains no achieve cue but
+    # "any suggestions for how to get this" contains "how to get".
+    if any(cue in text for cue in SUGGEST_CUES):
         return "identify"
     if any(cue in text for cue in ACHIEVE_CUES):
         return "achieve"
@@ -507,6 +535,10 @@ def node_respond(state: LookState) -> dict:
         "saved_facts": {
             ("remembered" if k == "_note" else k): v for k, v in learned.items()
         },
+        # "What do you know about me?" is answered by listing the store, not by
+        # the generic acknowledgement that re-states the profile as though the
+        # user had just supplied it.
+        "is_recall": any(cue in user_text.lower() for cue in RECALL_CUES),
         "signature": images.get("current") or images.get("reference") or {},
     }
     if intent == "identify":

@@ -284,6 +284,55 @@ class DemoChatModel:
         return "\n".join(lines)
 
     # -- chat ---------------------------------------------------------------
+    # -- recall: answer a question about what is stored ---------------------
+    LABELS = {
+        "name": "Your name",
+        "camera": "You shoot on",
+        "editor": "You edit in",
+        "preferred_look": "You like",
+        "dislikes": "You would rather avoid",
+    }
+
+    def _say_recall(self, profile: dict) -> str:
+        """List exactly what is in long-term memory. No inference, no padding.
+
+        This is a question about stored data, so the answer is the stored data.
+        Anything added here would be the app claiming to know something it does
+        not.
+        """
+        if not profile:
+            return (
+                "Nothing yet — this is the first thing you have told me, or your "
+                "profile was cleared.\n\n"
+                "Tell me something and I will keep it: your camera, the looks you "
+                "like, anything you want avoided. Try "
+                "*\"remember that I shoot on a Fuji X-T4\"*."
+            )
+
+        lines = ["Here is everything I have saved about you:", ""]
+        for key, label in self.LABELS.items():
+            if profile.get(key):
+                lines.append(f"- **{label}:** {profile[key]}")
+
+        notes = profile.get("notes")
+        if isinstance(notes, list) and notes:
+            lines.append("- **You asked me to remember:**")
+            for note in notes:
+                lines.append(f"    - {note}")
+
+        extra = [
+            k for k in profile
+            if k not in self.LABELS and k != "notes" and profile.get(k)
+        ]
+        for key in extra:
+            lines.append(f"- **{key.replace('_', ' ')}:** {profile[key]}")
+
+        lines.append(
+            "\nThis is stored against your user id, not this conversation, so it "
+            "applies everywhere. Say *\"remember that ...\"* to add to it."
+        )
+        return "\n".join(lines)
+
     def _say_chat(self, facts: dict) -> str:
         profile = facts.get("profile") or {}
         text = (facts.get("user_text") or "").lower()
@@ -291,12 +340,29 @@ class DemoChatModel:
 
         greeting = f"Hi {profile['name']}. " if profile.get("name") else ""
 
+        if facts.get("is_recall"):
+            return self._say_recall(profile)
+
         if saved:
-            pretty = "; ".join(f"{k.replace('_', ' ')}: {v}" for k, v in saved.items())
+            # An explicit "remember that ..." deserves a confirmation. A fact
+            # picked up in passing deserves an acknowledgement -- announcing
+            # "Saved." at somebody who was just introducing themselves reads
+            # like a form submission, not a conversation.
+            explicit = "remembered" in saved
+            fields = {k: v for k, v in saved.items() if k != "remembered"}
+            pretty = ", ".join(
+                f"{k.replace('_', ' ')} is {v}" for k, v in fields.items()
+            )
+            if explicit:
+                lead = f"{greeting}Saved \u2014 I will remember that {saved['remembered']}."
+                if pretty:
+                    lead += f" (Filed under {pretty}.)"
+            else:
+                lead = f"{greeting}Noted \u2014 {pretty}." if pretty else f"{greeting}Noted."
             return (
-                f"{greeting}Saved. I will remember that \u2014 {pretty}.\n\n"
-                f"It stays with your profile, so it applies in every conversation, "
-                f"not just this one."
+                f"{lead}\n\nThis is kept with your profile, so it applies in every "
+                f"conversation, not just this one. Ask *\"what do you know about me?\"* "
+                f"to see everything saved."
             )
 
         if any(k in text for k in ("what can you do", "help", "how does this work",
@@ -376,6 +442,10 @@ class GeminiNarrator:
         "2. Keep every markdown heading, list item and bold marker.\n"
         "3. Keep it the same length or shorter. No preamble, no sign-off.\n"
         "4. Do not invent advice that is not in the draft.\n"
+        "5. Never add, drop or reword a stated fact or preference about the "
+        "user. If the draft says they dislike something, do not turn it into "
+        "something they like. Asked to rewrite 'you dislike crushed blacks', "
+        "this model produced 'you prefer lifted blacks' -- do not do that.\n"
         "Return only the rewritten text."
     )
 
@@ -387,9 +457,31 @@ class GeminiNarrator:
         self.is_deterministic = False
         self.rewrites = 0
         self.fallbacks = 0
+        self.verbatim = 0
+
+    # Replies whose payload is a FACT ABOUT THE USER rather than a computed
+    # number are returned verbatim. The model is good at warming up advice and
+    # bad at leaving a stated preference alone: asked to rewrite "you dislike
+    # crushed blacks" it produced "you prefer warm golden tones and lifted
+    # blacks", inventing a preference the user never expressed. Numbers are
+    # protected by the prompt because they are checkable; invented preferences
+    # are not, so those replies simply do not go to the model.
+    def _is_factual_about_user(self, intent: str, facts: dict) -> bool:
+        if intent == "chat" and (
+            facts.get("is_recall") or facts.get("saved_facts") or facts.get("profile")
+        ):
+            return True
+        # A recommendation built from the stored profile restates the user's
+        # preferences back at them, so it carries the same risk as a chat reply
+        # about memory even though its intent is `identify`.
+        matches = facts.get("matches") or []
+        return bool(matches and matches[0].get("from_profile"))
 
     def narrate(self, intent: str, facts: dict) -> str:
         draft = self._demo.narrate(intent, facts)
+        if self._is_factual_about_user(intent, facts):
+            self.verbatim += 1
+            return draft
         try:
             text = self._pool.generate(
                 draft,
@@ -424,9 +516,33 @@ class ProviderChatModel:
         self.name = name
         self.is_deterministic = False
         self._demo = DemoChatModel()
+        self.rewrites = 0
+        self.fallbacks = 0
+        self.verbatim = 0
+
+    # Replies whose payload is a FACT ABOUT THE USER rather than a computed
+    # number are returned verbatim. The model is good at warming up advice and
+    # bad at leaving a stated preference alone: asked to rewrite "you dislike
+    # crushed blacks" it produced "you prefer warm golden tones and lifted
+    # blacks", inventing a preference the user never expressed. Numbers are
+    # protected by the prompt because they are checkable; invented preferences
+    # are not, so those replies simply do not go to the model.
+    def _is_factual_about_user(self, intent: str, facts: dict) -> bool:
+        if intent == "chat" and (
+            facts.get("is_recall") or facts.get("saved_facts") or facts.get("profile")
+        ):
+            return True
+        # A recommendation built from the stored profile restates the user's
+        # preferences back at them, so it carries the same risk as a chat reply
+        # about memory even though its intent is `identify`.
+        matches = facts.get("matches") or []
+        return bool(matches and matches[0].get("from_profile"))
 
     def narrate(self, intent: str, facts: dict) -> str:
         draft = self._demo.narrate(intent, facts)
+        if self._is_factual_about_user(intent, facts):
+            self.verbatim += 1
+            return draft
         try:
             from langchain_core.messages import HumanMessage, SystemMessage
 

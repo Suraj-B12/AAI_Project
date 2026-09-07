@@ -590,3 +590,117 @@ def test_t1_a_task_keyword_still_beats_remember(app):
     """"remember the teal look? how do I get it" is a request for advice."""
     result = say(app, "remember the teal and orange look? how do i get it?", thread="mem-vs")
     assert result["intent"] == "achieve"
+
+
+# ==========================================================================
+# T4 -- questions about memory, and protecting it from the narrator
+# ==========================================================================
+
+def test_t4_asks_what_do_you_know_about_me_and_gets_an_answer(app):
+    """A question about the store is answered by listing the store.
+
+    Regression. There was no handler for this, so it fell through to the
+    generic chat reply, which re-states the profile as though the user had just
+    supplied it -- acknowledging a statement nobody made and never answering
+    the actual question.
+    """
+    say(app, "Hi, I'm Suraj. I shoot on a Fuji X-T4 and I like warm golden looks.")
+    say(app, "remember that I hate crushed blacks")
+
+    result = say(app, "what do you know about me?")
+    reply = result["messages"][-1].content
+
+    assert result["intent"] == "chat"
+    assert "saved about you" in reply.lower()
+    for expected in ("Suraj", "X-T4".lower(), "warm golden", "crushed blacks"):
+        assert expected.lower() in reply.lower(), f"{expected!r} missing from the recall"
+
+
+def test_t4_recall_with_an_empty_profile_says_so(app):
+    result = say(app, "what do you know about me?", thread="blank", user_id="nobody-at-all")
+    reply = result["messages"][-1].content.lower()
+    assert "nothing yet" in reply
+    assert "remember that" in reply, "it should say how to add something"
+
+
+@pytest.mark.parametrize(
+    "question",
+    ["what should i try?", "any suggestions?", "what do you recommend?", "suggest a look"],
+)
+def test_t4_suggestion_requests_use_the_profile(app, question):
+    """"What should I try?" must reach the recommender, not the generic chat.
+
+    Regression: only "what LOOK should I try" matched an identify cue, so the
+    common phrasings fell to chat and returned a canned acknowledgement.
+    """
+    say(app, "I like warm golden looks.", thread="sugg")
+    result = say(app, question, thread="sugg")
+    assert result["intent"] == "identify", f"{question!r} routed to {result['intent']}"
+    assert result["matches"], "a suggestion request should produce recommendations"
+    assert all(m.get("from_profile") for m in result["matches"])
+
+
+def test_t4_recall_beats_a_task_keyword(app):
+    """"Do you remember what look I liked?" is a memory question, not a task."""
+    say(app, "I like warm golden looks.", thread="recall-vs")
+    result = say(app, "what did i tell you about my camera?", thread="recall-vs")
+    assert result["intent"] == "chat"
+
+
+def test_narrator_does_not_send_memory_replies_to_the_model():
+    """Statements of stored fact are returned verbatim, never rewritten.
+
+    Numbers are protected by the system prompt because they are checkable.
+    A stated preference is not: asked to rewrite "you dislike crushed blacks",
+    the model produced "you prefer warm golden tones and lifted blacks",
+    inventing a preference the user never expressed. So those replies do not
+    go to the model at all.
+    """
+    from looklab.llm import DemoChatModel, GeminiNarrator
+
+    class ExplodingPool:
+        model = "test"
+
+        def __len__(self):
+            return 1
+
+        def generate(self, *a, **k):  # pragma: no cover - must never be called
+            raise AssertionError("a memory reply was sent to the model")
+
+    narrator = GeminiNarrator(ExplodingPool())
+    profile = {"name": "Suraj", "dislikes": "crushed blacks"}
+
+    # Recall, an explicit save, and any reply carrying a profile.
+    narrator.narrate("chat", {"is_recall": True, "profile": profile})
+    narrator.narrate("chat", {"saved_facts": {"remembered": "I hate crushed blacks"},
+                              "profile": profile})
+    narrator.narrate("chat", {"profile": profile, "user_text": "hello"})
+    # A recommendation built from the profile restates it, so it is protected too.
+    narrator.narrate("identify", {"matches": [{"label": "Warm Golden", "notes": "",
+                                               "from_profile": True}],
+                                  "profile": profile})
+    assert narrator.verbatim == 4
+    assert narrator.rewrites == 0
+
+
+def test_narrator_still_rewrites_advice():
+    """Only user-fact replies are protected; advice is still improved."""
+    from looklab.llm import GeminiNarrator
+
+    class Pool:
+        model = "test"
+
+        def __len__(self):
+            return 1
+
+        def generate(self, draft, **k):
+            return "rewritten: " + draft[:20]
+
+    narrator = GeminiNarrator(Pool())
+    out = narrator.narrate("achieve", {
+        "steps": [{"slider": "Temp", "amount": 12, "why": "warmer", "detail": ""}],
+        "distance": 0.5,
+        "target_name": "Warm Golden",
+    })
+    assert out.startswith("rewritten:")
+    assert narrator.rewrites == 1 and narrator.verbatim == 0
