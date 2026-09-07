@@ -16,6 +16,7 @@ and nothing downstream changes.
 from __future__ import annotations
 
 import os
+import threading
 from typing import Any
 
 from langchain_core.messages import AIMessage
@@ -334,10 +335,39 @@ class ProviderChatModel:
             return draft
 
 
-def get_narrator() -> Any:
-    """Return the configured narrator. Deterministic unless explicitly enabled.
+_NARRATOR: Any = None
+_NARRATOR_KEY: str | None = None
+_NARRATOR_LOCK = threading.Lock()
 
-    Set ``LOOKLAB_MODEL=google`` plus ``GOOGLE_API_KEY``, or
+
+def get_narrator() -> Any:
+    """Return the configured narrator, built once per process.
+
+    Cached deliberately. Building a fresh narrator per turn would rebuild the
+    Gemini pool on every request -- discarding its per-key health, so a
+    credential that just rate-limited would be retried immediately -- and would
+    make the rewrite/fallback counters on /models read zero forever, because
+    the object being inspected was never the one that did the work.
+
+    The cache key is the provider configuration, so changing ``LOOKLAB_MODEL``
+    in a test still takes effect.
+    """
+    global _NARRATOR, _NARRATOR_KEY
+    cache_key = "|".join(
+        (os.getenv(name) or "") for name in ("LOOKLAB_MODEL", "LOOKLAB_MODEL_NAME", "GEMINI_API_KEYS")
+    )
+    with _NARRATOR_LOCK:
+        if _NARRATOR is not None and _NARRATOR_KEY == cache_key:
+            return _NARRATOR
+        _NARRATOR = _build_narrator()
+        _NARRATOR_KEY = cache_key
+        return _NARRATOR
+
+
+def _build_narrator() -> Any:
+    """Construct the narrator. Deterministic unless a provider is configured.
+
+    Set ``LOOKLAB_MODEL=google`` with ``GEMINI_API_KEYS``, or
     ``LOOKLAB_MODEL=ollama`` with Ollama running locally, to use a real model.
     Anything missing falls back to ``DemoChatModel`` silently -- a missing key
     must never be able to break a demo.
