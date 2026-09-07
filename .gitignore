@@ -1,0 +1,23 @@
+# Secrets -- never commit
+.env
+.env.local
+*.key
+secrets/
+
+# Virtualenv
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+
+# Runtime databases (regenerated on first run)
+data/*.sqlite
+data/*.sqlite-wal
+data/*.sqlite-shm
+looklab/data/*.sqlite*
+looklab/data/tiktoken/
+
+# Scratch
+council_verdict.txt
+.pytest_cache/
+.stress/

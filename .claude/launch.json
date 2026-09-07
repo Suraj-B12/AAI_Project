@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "looklab",
+      "runtimeExecutable": ".venv/Scripts/python.exe",
+      "runtimeArgs": ["-m", "uvicorn", "looklab.server:app", "--host", "127.0.0.1", "--port", "8077"],
+      "port": 8077
+    }
+  ]
+}

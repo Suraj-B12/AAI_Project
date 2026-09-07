@@ -1,0 +1,24 @@
+# Base plate attribution
+
+Every image below was downloaded from Wikimedia Commons under the licence
+stated in its row, and is used here only as a neutral base plate for colour
+measurement. Downscaled to at most 512px on the long edge; no other alteration.
+
+| Plate | Source | Author | Licence |
+|---|---|---|---|
+| `portrait_daylight_0` | [File:Sitting (squatting) for a Nadia Strid portrait.jpg](https://commons.wikimedia.org/wiki/File:Sitting_(squatting)_for_a_Nadia_Strid_portrait.jpg) | Mary Constance from Memphis, USA | [CC BY 2.0](https://creativecommons.org/licenses/by/2.0) |
+| `portrait_daylight_1` | [File:1993-1994-Giardino Giusti (Verona)-testo e photo Paolo Villa-nA2-tesi Accademia Belle Arti Bologna-portone di Palazzo Giusti.jpg](https://commons.wikimedia.org/wiki/File:1993-1994-Giardino_Giusti_(Verona)-testo_e_photo_Paolo_Villa-nA2-tesi_Accademia_Belle_Arti_Bologna-portone_di_Palazzo_Giusti.jpg) | Paolo Villa | [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0) |
+| `landscape_sky_0` | [File:Field, corn, Liechtenstein, Mountains, Alps, Vaduz, sky, clouds, landscape.jpg](https://commons.wikimedia.org/wiki/File:Field,_corn,_Liechtenstein,_Mountains,_Alps,_Vaduz,_sky,_clouds,_landscape.jpg) | Paranoid | Public domain |
+| `landscape_sky_1` | [File:Large cloud over Mexican landscape.jpg](https://commons.wikimedia.org/wiki/File:Large_cloud_over_Mexican_landscape.jpg) | Tomascastelazo | [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0) |
+| `interior_lowkey_0` | [File:Casa Batlló (Antoni Gaudi) (interior), 43, Passeig de Gràcia, Eixample, Barcelona, Catalonia, Spain.jpg](https://commons.wikimedia.org/wiki/File:Casa_Batll%C3%B3_(Antoni_Gaudi)_(interior),_43,_Passeig_de_Gr%C3%A0cia,_Eixample,_Barcelona,_Catalonia,_Spain.jpg) | Mstyslav Chernov | [CC BY-SA 3.0](https://creativecommons.org/licenses/by-sa/3.0) |
+| `interior_lowkey_1` | [File:Copped Hall partly restored first floor room, Epping, Essex, England.jpg](https://commons.wikimedia.org/wiki/File:Copped_Hall_partly_restored_first_floor_room,_Epping,_Essex,_England.jpg) | Acabashi | [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0) |
+| `food_saturated_0` | [File:Nordic Bar, Fitzrovia, London (3911505025).jpg](https://commons.wikimedia.org/wiki/File:Nordic_Bar,_Fitzrovia,_London_(3911505025).jpg) | Ewan Munro from London, UK | [CC BY-SA 2.0](https://creativecommons.org/licenses/by-sa/2.0) |
+| `food_saturated_1` | [File:Irokanten, The colourful agar jelly within the New Year's dishes, Niigata, Japan, January 2026.jpg](https://commons.wikimedia.org/wiki/File:Irokanten,_The_colourful_agar_jelly_within_the_New_Year%27s_dishes,_Niigata,_Japan,_January_2026.jpg) | Tail furry | [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0) |
+| `street_neutral_0` | [File:New York City at night HDR.jpg](https://commons.wikimedia.org/wiki/File:New_York_City_at_night_HDR.jpg) | Paulo Barcellos Jr. | [CC BY-SA 2.0](https://creativecommons.org/licenses/by-sa/2.0) |
+| `street_neutral_1` | [File:New York City (New York, USA), Empire State Building -- 2012 -- 6436.jpg](https://commons.wikimedia.org/wiki/File:New_York_City_(New_York,_USA),_Empire_State_Building_--_2012_--_6436.jpg) | Dietmar Rabich | [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0) |
+| `nature_green_0` | [File:Green trees at Grasslaw - geograph.org.uk - 433907.jpg](https://commons.wikimedia.org/wiki/File:Green_trees_at_Grasslaw_-_geograph.org.uk_-_433907.jpg) | Les Harvey | [CC BY-SA 2.0](https://creativecommons.org/licenses/by-sa/2.0) |
+| `nature_green_1` | [File:Trees in Shave Green inclosure, New Forest - geograph.org.uk - 786758.jpg](https://commons.wikimedia.org/wiki/File:Trees_in_Shave_Green_inclosure,_New_Forest_-_geograph.org.uk_-_786758.jpg) | Peter Facey | [CC BY-SA 2.0](https://creativecommons.org/licenses/by-sa/2.0) |
+| `golden_hour_0` | [File:Golden hour at bekol savannah.jpg](https://commons.wikimedia.org/wiki/File:Golden_hour_at_bekol_savannah.jpg) | Candra Firmansyah | [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0) |
+| `golden_hour_1` | [File:Dendermonde town hall and belfry during golden hour (DSCF0501).jpg](https://commons.wikimedia.org/wiki/File:Dendermonde_town_hall_and_belfry_during_golden_hour_(DSCF0501).jpg) | Trougnouf (Benoit Brummer) | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0) |
+| `snow_highkey_0` | [File:Pieter Bruegel the Elder - Hunters in the Snow (Winter) - Google Art Project.jpg](https://commons.wikimedia.org/wiki/File:Pieter_Bruegel_the_Elder_-_Hunters_in_the_Snow_(Winter)_-_Google_Art_Project.jpg) | Pieter Brueghel the Elder | Public domain |
+| `snow_highkey_1` | [File:Dampfzug am Brocken in Winterlandschaft (2).jpg](https://commons.wikimedia.org/wiki/File:Dampfzug_am_Brocken_in_Winterlandschaft_(2).jpg) | Markus Trienke | [CC BY-SA 2.0](https://creativecommons.org/licenses/by-sa/2.0) |

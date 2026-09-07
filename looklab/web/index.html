@@ -1,0 +1,686 @@
+<!--
+  LookLab front end.
+
+  One self-contained file, served by FastAPI at "/". No npm, no build step, no
+  node_modules, no CORS -- the page and the API share an origin. Vanilla JS.
+
+  The right column is labelled with the four rubric topics so an evaluator does
+  not have to hunt for anything. The graph pane renders the mermaid text that
+  the compiled graph object emits itself, and highlights the branch taken on
+  the current turn.
+-->
+<title>LookLab</title>
+<style>
+  :root {
+    --bg: #f7f7f5;
+    --panel: #ffffff;
+    --ink: #1b1b19;
+    --muted: #6b6b66;
+    --line: #dcdcd6;
+    --accent: #2f6f4f;
+    --accent-soft: #e6f0ea;
+    --warn: #8a5a1a;
+    --mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #16171a; --panel: #1e1f23; --ink: #e8e8e4; --muted: #9a9a93;
+      --line: #33343a; --accent: #6cc79a; --accent-soft: #23342b; --warn: #d4a25a;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #16171a; --panel: #1e1f23; --ink: #e8e8e4; --muted: #9a9a93;
+    --line: #33343a; --accent: #6cc79a; --accent-soft: #23342b; --warn: #d4a25a;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  header {
+    display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;
+    padding: 12px 18px; border-bottom: 1px solid var(--line); background: var(--panel);
+  }
+  header h1 { margin: 0; font-size: 17px; letter-spacing: -0.01em; }
+  header .sub { color: var(--muted); font-size: 12.5px; }
+  header .spacer { flex: 1; }
+  header .badge {
+    font-family: var(--mono); font-size: 11px; color: var(--muted);
+    border: 1px solid var(--line); border-radius: 999px; padding: 2px 9px;
+  }
+
+  main {
+    display: grid; grid-template-columns: 210px minmax(320px, 1fr) 380px;
+    gap: 14px; padding: 14px; align-items: start;
+  }
+  @media (max-width: 1100px) { main { grid-template-columns: 1fr; } }
+
+  .panel {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 8px; padding: 12px;
+  }
+  .panel h2 {
+    margin: 0 0 9px; font-size: 12px; text-transform: uppercase;
+    letter-spacing: 0.07em; color: var(--muted); font-weight: 600;
+  }
+  .panel h3 {
+    margin: 0 0 6px; font-size: 12.5px; display: flex; align-items: center; gap: 7px;
+  }
+  .topic {
+    font-family: var(--mono); font-size: 10.5px; font-weight: 700;
+    background: var(--accent-soft); color: var(--accent);
+    border-radius: 4px; padding: 1px 6px; letter-spacing: 0.03em;
+  }
+  .sec { border-top: 1px solid var(--line); padding-top: 11px; margin-top: 11px; }
+  .sec:first-of-type { border-top: 0; padding-top: 0; margin-top: 0; }
+
+  label { display: block; font-size: 11.5px; color: var(--muted); margin: 8px 0 3px; }
+  input[type=text], input[type=number] {
+    width: 100%; padding: 6px 8px; border: 1px solid var(--line);
+    border-radius: 5px; background: var(--bg); color: var(--ink);
+    font-family: var(--mono); font-size: 12.5px;
+  }
+  input[type=range] { width: 100%; accent-color: var(--accent); }
+  button {
+    font: inherit; font-size: 12.5px; padding: 6px 11px; cursor: pointer;
+    border: 1px solid var(--line); border-radius: 5px;
+    background: var(--bg); color: var(--ink);
+  }
+  button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+  button:disabled { opacity: 0.45; cursor: not-allowed; }
+  button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  button.primary:hover:not(:disabled) { color: #fff; filter: brightness(1.08); }
+
+  .thread {
+    display: flex; align-items: center; gap: 6px; width: 100%;
+    padding: 6px 8px; margin-bottom: 4px; border-radius: 5px; cursor: pointer;
+    border: 1px solid transparent; background: none; color: var(--ink);
+    font-family: var(--mono); font-size: 12.5px; text-align: left;
+  }
+  .thread:hover { background: var(--bg); }
+  .thread.active {
+    background: var(--accent-soft); border-color: var(--accent); color: var(--accent);
+    font-weight: 600;
+  }
+  .thread .n { margin-left: auto; font-size: 10.5px; color: var(--muted); }
+
+  #threadName {
+    font-family: var(--mono); font-size: 21px; font-weight: 700;
+    color: var(--accent); margin: 0 0 2px; word-break: break-all;
+  }
+  #threadMeta { color: var(--muted); font-size: 11.5px; margin-bottom: 10px; }
+
+  #log { min-height: 260px; max-height: 54vh; overflow-y: auto; padding-right: 4px; }
+  .msg { margin-bottom: 12px; }
+  .msg .who {
+    font-family: var(--mono); font-size: 10.5px; text-transform: uppercase;
+    letter-spacing: 0.06em; color: var(--muted); margin-bottom: 3px;
+  }
+  .msg.user .bubble {
+    background: var(--accent-soft); border: 1px solid var(--line);
+    border-radius: 7px; padding: 7px 10px;
+  }
+  .msg.assistant .bubble { padding: 0 2px; }
+  .bubble { white-space: pre-wrap; word-wrap: break-word; }
+  .bubble code {
+    font-family: var(--mono); font-size: 12px;
+    background: var(--bg); padding: 1px 4px; border-radius: 3px;
+  }
+  .bubble strong { font-weight: 650; }
+  .empty { color: var(--muted); font-style: italic; padding: 18px 2px; }
+
+  .composer { display: flex; gap: 7px; margin-top: 10px; align-items: flex-start; }
+  .composer input { flex: 1; }
+  .drop {
+    border: 1px dashed var(--line); border-radius: 6px; padding: 8px 10px;
+    margin-top: 9px; font-size: 11.5px; color: var(--muted);
+    display: flex; gap: 14px; align-items: center; flex-wrap: wrap;
+  }
+  .drop.armed { border-color: var(--accent); color: var(--accent); }
+  .drop .slot { display: flex; align-items: center; gap: 6px; }
+
+  pre.mermaid-src {
+    font-family: var(--mono); font-size: 10px; line-height: 1.35;
+    max-height: 210px; overflow: auto; background: var(--bg);
+    border: 1px solid var(--line); border-radius: 5px; padding: 8px; margin: 0;
+  }
+  .branchline { font-size: 12px; margin-bottom: 7px; }
+  .branchline b { font-family: var(--mono); color: var(--accent); }
+
+  ol.recipe { margin: 0; padding-left: 20px; font-size: 12.5px; }
+  ol.recipe li { margin-bottom: 5px; }
+  ol.recipe .why { color: var(--muted); font-size: 11.5px; display: block; }
+  .turnsep {
+    font-family: var(--mono); font-size: 10.5px; color: var(--muted);
+    margin: 8px 0 4px; text-transform: uppercase; letter-spacing: 0.05em;
+  }
+
+  table.kv { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  table.kv td { padding: 3px 0; vertical-align: top; }
+  table.kv td.k { color: var(--muted); width: 42%; }
+  table.kv td.v { font-family: var(--mono); }
+
+  .stat { display: flex; justify-content: space-between; font-size: 12.5px; padding: 2px 0; }
+  .stat .v { font-family: var(--mono); }
+  .arrow { color: var(--accent); font-weight: 700; }
+  .note { font-size: 11px; color: var(--muted); margin-top: 7px; line-height: 1.45; }
+  .err {
+    background: #fdecea; border: 1px solid #f5c6c0; color: #8a1c10;
+    padding: 7px 10px; border-radius: 5px; font-size: 12.5px; margin-bottom: 10px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .err { background: #3a1e1a; border-color: #6a3129; color: #f0b8b0; }
+  }
+</style>
+
+<header>
+  <h1>LookLab</h1>
+  <span class="sub">Colour-grading assistant &middot; FastAPI + LangGraph &middot; deterministic CIELAB analysis</span>
+  <span class="spacer"></span>
+  <span class="badge" id="healthBadge">connecting&hellip;</span>
+</header>
+
+<main>
+  <!-- ---------------------------------------------------------------- -->
+  <section class="panel">
+    <h2>Session</h2>
+    <label for="userId">user_id &mdash; the long-term memory key</label>
+    <input type="text" id="userId" value="suraj" spellcheck="false">
+
+    <div class="sec">
+      <h2>Threads</h2>
+      <div id="threadList"></div>
+      <div style="display:flex; gap:6px; margin-top:8px;">
+        <input type="text" id="newThread" placeholder="thread name" spellcheck="false">
+        <button id="addThread" title="Create a thread">+</button>
+      </div>
+      <p class="note">
+        Each thread is an independent checkpoint. The profile below is shared across
+        all of them &mdash; that contrast is the point.
+      </p>
+    </div>
+
+    <div class="sec">
+      <h2>Try these</h2>
+      <div id="examples"></div>
+    </div>
+  </section>
+
+  <!-- ---------------------------------------------------------------- -->
+  <section class="panel">
+    <p id="threadName">default</p>
+    <p id="threadMeta">no history yet</p>
+    <div id="errBox"></div>
+    <div id="log"></div>
+
+    <div class="composer">
+      <input type="text" id="input" placeholder="Ask me what a look is, how to get one, or what's wrong with an edit&hellip;" spellcheck="false">
+      <button class="primary" id="send">Send</button>
+    </div>
+
+    <div class="drop" id="drop">
+      <span class="slot">
+        <button id="pickRef" type="button">reference image</button>
+        <span id="refName">none</span>
+      </span>
+      <span class="slot">
+        <button id="pickCur" type="button">your photo</button>
+        <span id="curName">none</span>
+      </span>
+      <span class="slot"><button id="clearImgs" type="button">clear</button></span>
+      <input type="file" id="fileRef" accept="image/*" hidden>
+      <input type="file" id="fileCur" accept="image/*" hidden>
+    </div>
+    <p class="note">
+      Images are optional. Every flow &mdash; identify, achieve, critique &mdash; also works by
+      naming a look in text, so nothing here depends on an upload succeeding.
+    </p>
+  </section>
+
+  <!-- ---------------------------------------------------------------- -->
+  <section class="panel">
+    <div class="sec">
+      <h3><span class="topic">T1</span> Graph &amp; routing</h3>
+      <p class="branchline">branch taken: <b id="branchTaken">&mdash;</b> <span id="branchNode" style="color:var(--muted)"></span></p>
+      <div id="graphBox"><pre class="mermaid-src" id="mermaidSrc">loading&hellip;</pre></div>
+      <p class="note">
+        Diagram text is emitted by the compiled graph object itself
+        (<code>draw_mermaid()</code>), not drawn by hand. The
+        <code>chat</code> branch runs no analysis node at all.
+      </p>
+    </div>
+
+    <div class="sec">
+      <h3><span class="topic">T2</span> Recipe <span id="recipeCount" style="color:var(--muted);font-weight:400"></span></h3>
+      <div id="recipeBox"><p class="empty">No steps yet.</p></div>
+      <p class="note">
+        <code>recipe</code> uses <code>operator.add</code> &mdash; blind concatenation, so
+        superseded steps are kept on purpose. Switch threads and this pane changes;
+        the profile below does not.
+      </p>
+    </div>
+
+    <div class="sec">
+      <h3><span class="topic">T3</span> Context budget</h3>
+      <div class="stat"><span>messages</span>
+        <span class="v"><span id="mBefore">0</span> <span class="arrow">&rarr;</span> <span id="mAfter">0</span></span></div>
+      <div class="stat"><span>tokens</span>
+        <span class="v"><span id="tBefore">0</span> <span class="arrow">&rarr;</span> <span id="tAfter">0</span></span></div>
+      <div class="stat"><span>payloads filtered</span><span class="v" id="payloadsDropped">0</span></div>
+      <label for="budget">token budget: <span id="budgetVal">800</span></label>
+      <input type="range" id="budget" min="200" max="4000" step="50" value="800">
+      <p class="note">
+        Two stages: signature payloads are <em>filtered</em> out because the numbers already
+        live in <code>state["images"]</code>, then the rest is <em>trimmed</em> to budget.
+        Minimum is clamped to 200 &mdash; below that <code>trim_messages</code> silently
+        returns a single message.
+      </p>
+    </div>
+
+    <div class="sec">
+      <h3><span class="topic">T4</span> Profile <span style="color:var(--muted);font-weight:400">(long-term store)</span></h3>
+      <div id="profileBox"><p class="empty">Nothing learned yet.</p></div>
+      <p class="note">
+        Namespaced <code>("profiles", user_id)</code> in a SQLite store &mdash; read at graph
+        entry, written at exit, independent of thread. Try:
+        &ldquo;I'm Suraj, I shoot on a Fuji X-T4 and I like warm golden looks.&rdquo;
+      </p>
+    </div>
+
+    <div class="sec">
+      <h3>Narrator <span style="color:var(--muted);font-weight:400">(not graded)</span></h3>
+      <div id="modelBox"><p class="empty">checking&hellip;</p></div>
+      <p class="note">
+        Every number above is computed deterministically. The narrator only rewrites the
+        wording, so removing it entirely changes nothing but the prose.
+      </p>
+    </div>
+
+    <div class="sec">
+      <h3>Glossary</h3>
+      <input type="text" id="glossaryQ" placeholder="look up a term&hellip;" spellcheck="false">
+      <div id="glossaryBox" style="margin-top:8px"></div>
+      <p class="note" id="glossaryCredit"></p>
+    </div>
+  </section>
+</main>
+
+<script>
+(function () {
+  "use strict";
+
+  var state = {
+    thread: "default",
+    threads: ["default", "moody"],
+    budget: 800,
+    refB64: null,
+    curB64: null,
+    busy: false
+  };
+
+  var $ = function (id) { return document.getElementById(id); };
+
+  function esc(s) {
+    return String(s == null ? "" : s)
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+
+  // Minimal inline markdown: bold, italics, code. Escaped first, so nothing
+  // the server returns can inject markup.
+  function md(s) {
+    return esc(s)
+      .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+      .replace(/`([^`]+)`/g, "<code>$1</code>")
+      .replace(/(^|[\s(])_([^_]+)_(?=[\s.,)]|$)/g, "$1<em>$2</em>");
+  }
+
+  function showError(msg) {
+    $("errBox").innerHTML = msg ? '<div class="err">' + esc(msg) + "</div>" : "";
+  }
+
+  function api(path, opts) {
+    return fetch(path, opts).then(function (r) {
+      if (!r.ok) {
+        return r.text().then(function (t) {
+          throw new Error("HTTP " + r.status + " on " + path + " - " + t.slice(0, 200));
+        });
+      }
+      var ct = r.headers.get("content-type") || "";
+      return ct.indexOf("json") >= 0 ? r.json() : r.text();
+    });
+  }
+
+  // ---- threads ----------------------------------------------------------
+  function renderThreads() {
+    var box = $("threadList");
+    box.innerHTML = "";
+    state.threads.forEach(function (t) {
+      var b = document.createElement("button");
+      b.className = "thread" + (t === state.thread ? " active" : "");
+      b.innerHTML = "<span>" + esc(t) + "</span>";
+      b.onclick = function () { selectThread(t); };
+      box.appendChild(b);
+    });
+  }
+
+  function selectThread(t) {
+    state.thread = t;
+    $("threadName").textContent = t;
+    renderThreads();
+    loadThread();
+  }
+
+  // ---- rendering --------------------------------------------------------
+  function renderLog(messages) {
+    var log = $("log");
+    if (!messages || !messages.length) {
+      log.innerHTML = '<p class="empty">No messages in this thread yet. Say hello, or ask what a look is.</p>';
+      return;
+    }
+    log.innerHTML = messages.map(function (m) {
+      return '<div class="msg ' + esc(m.role) + '">' +
+             '<div class="who">' + esc(m.role) + "</div>" +
+             '<div class="bubble">' + md(m.content) + "</div></div>";
+    }).join("");
+    log.scrollTop = log.scrollHeight;
+  }
+
+  function renderRecipe(recipe) {
+    var box = $("recipeBox");
+    $("recipeCount").textContent = recipe && recipe.length ? "(" + recipe.length + ")" : "";
+    if (!recipe || !recipe.length) {
+      box.innerHTML = '<p class="empty">No steps yet. Try &ldquo;how do I get the teal and orange look?&rdquo;</p>';
+      return;
+    }
+    var html = "", lastTurn = null;
+    html += "<ol class='recipe'>";
+    recipe.forEach(function (e) {
+      if (e.turn !== lastTurn) {
+        if (lastTurn !== null) { html += "</ol>"; }
+        html += "<div class='turnsep'>turn " + esc(e.turn) +
+                (e.distance != null ? " &middot; distance " + Number(e.distance).toFixed(3) : "") +
+                "</div><ol class='recipe'>";
+        lastTurn = e.turn;
+      }
+      html += "<li><strong>" + esc(e.slider) + " " + esc(e.amount) + "</strong>" +
+              "<span class='why'>" + esc(e.why) + "</span></li>";
+    });
+    html += "</ol>";
+    box.innerHTML = html;
+  }
+
+  function renderTelemetry(t) {
+    t = t || {};
+    $("mBefore").textContent = t.msgs_before || 0;
+    $("mAfter").textContent = t.msgs_after_trim || 0;
+    $("tBefore").textContent = (t.tokens_before || 0).toLocaleString();
+    $("tAfter").textContent = (t.tokens_after || 0).toLocaleString();
+    $("payloadsDropped").textContent = t.dropped_payloads || 0;
+  }
+
+  function renderProfile(p) {
+    var box = $("profileBox");
+    var keys = p ? Object.keys(p) : [];
+    if (!keys.length) {
+      box.innerHTML = '<p class="empty">Nothing learned yet.</p>';
+      return;
+    }
+    box.innerHTML = "<table class='kv'>" + keys.map(function (k) {
+      return "<tr><td class='k'>" + esc(k) + "</td><td class='v'>" + esc(p[k]) + "</td></tr>";
+    }).join("") + "</table>";
+  }
+
+  function renderBranch(intent, node) {
+    $("branchTaken").textContent = intent || "—";
+    $("branchNode").textContent = node ? "→ " + node : "";
+    highlightMermaid(node);
+  }
+
+  var mermaidText = "";
+  function highlightMermaid(node) {
+    var pre = $("mermaidSrc");
+    if (!mermaidText) { return; }
+    if (!node) { pre.textContent = mermaidText; return; }
+    // Mark the branch entry node in the served diagram text.
+    pre.innerHTML = esc(mermaidText).replace(
+      new RegExp("(^|\\n)(\\s*" + node + "\\b)", "g"),
+      "$1<span style='background:var(--accent-soft);color:var(--accent);font-weight:700'>$2</span>"
+    );
+  }
+
+  // ---- data loading -----------------------------------------------------
+  function loadThread() {
+    return api("/state/" + encodeURIComponent(state.thread)).then(function (s) {
+      renderLog(s.messages);
+      renderRecipe(s.recipe);
+      renderTelemetry(s.telemetry);
+      renderBranch(s.intent, s.branch ? branchNodeFor(s.branch) : null);
+      $("threadMeta").textContent = s.exists
+        ? (s.messages.length + " messages · " + s.recipe.length + " recipe steps")
+        : "no history for thread “" + state.thread + "” yet";
+    }).catch(function (e) { showError(e.message); });
+  }
+
+  var BRANCH_NODES = {
+    identify: "analyze_ref", achieve: "analyze_pair",
+    critique: "analyze_cur", chat: "respond"
+  };
+  function branchNodeFor(intent) { return BRANCH_NODES[intent] || null; }
+
+  function loadProfile() {
+    var uid = $("userId").value.trim() || "suraj";
+    return api("/profile/" + encodeURIComponent(uid))
+      .then(function (p) { renderProfile(p.profile); })
+      .catch(function (e) { showError(e.message); });
+  }
+
+  // ---- sending ----------------------------------------------------------
+  function send() {
+    var text = $("input").value.trim();
+    if (!text || state.busy) { return; }
+    state.busy = true;
+    $("send").disabled = true;      // belt: no double-submit
+    showError("");
+
+    var body = {
+      message: text,
+      user_id: $("userId").value.trim() || "suraj",
+      thread_id: state.thread,
+      budget: state.budget
+    };
+    if (state.refB64) { body.reference_b64 = state.refB64; }
+    if (state.curB64) { body.current_b64 = state.curB64; }
+
+    $("input").value = "";
+    api("/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    }).then(function (r) {
+      renderRecipe(r.recipe);
+      renderTelemetry(r.telemetry);
+      renderProfile(r.profile);
+      renderBranch(r.intent, r.branch_node);
+      clearImages();
+      loadModels();
+      return loadThread();
+    }).catch(function (e) {
+      showError(e.message);
+    }).then(function () {
+      state.busy = false;
+      $("send").disabled = false;
+      $("input").focus();
+    });
+  }
+
+  // ---- images -----------------------------------------------------------
+  function readFile(file, cb) {
+    var fr = new FileReader();
+    fr.onload = function () { cb(String(fr.result)); };
+    fr.readAsDataURL(file);
+  }
+
+  function clearImages() {
+    state.refB64 = null; state.curB64 = null;
+    $("refName").textContent = "none";
+    $("curName").textContent = "none";
+    $("fileRef").value = ""; $("fileCur").value = "";
+    $("drop").classList.remove("armed");
+  }
+
+  // ---- examples ---------------------------------------------------------
+  var EXAMPLES = [
+    "hey, what can you do?",
+    "I'm Suraj. I shoot on a Fuji X-T4 and I like warm golden looks.",
+    "how do I get the teal and orange look?",
+    "how do I get the deep amber look?",
+    "what look is cool blue hour?",
+    "what should I try?"
+  ];
+
+  function renderExamples() {
+    var box = $("examples");
+    box.innerHTML = "";
+    EXAMPLES.forEach(function (t) {
+      var b = document.createElement("button");
+      b.textContent = t.length > 30 ? t.slice(0, 29) + "…" : t;
+      b.title = t;
+      b.style.cssText = "display:block;width:100%;text-align:left;margin-bottom:4px;font-size:11.5px";
+      b.onclick = function () { $("input").value = t; $("input").focus(); };
+      box.appendChild(b);
+    });
+  }
+
+  // ---- wiring -----------------------------------------------------------
+  $("send").onclick = send;
+  $("input").addEventListener("keydown", function (e) {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
+  });
+
+  $("budget").addEventListener("input", function () {
+    state.budget = Number(this.value);
+    $("budgetVal").textContent = state.budget;
+  });
+
+  $("userId").addEventListener("change", loadProfile);
+
+  $("addThread").onclick = function () {
+    var name = $("newThread").value.trim();
+    if (!name) { return; }
+    if (state.threads.indexOf(name) < 0) { state.threads.push(name); }
+    $("newThread").value = "";
+    selectThread(name);
+  };
+  $("newThread").addEventListener("keydown", function (e) {
+    if (e.key === "Enter") { $("addThread").click(); }
+  });
+
+  $("pickRef").onclick = function () { $("fileRef").click(); };
+  $("pickCur").onclick = function () { $("fileCur").click(); };
+  $("clearImgs").onclick = clearImages;
+  $("fileRef").addEventListener("change", function () {
+    var f = this.files[0]; if (!f) { return; }
+    readFile(f, function (d) {
+      state.refB64 = d; $("refName").textContent = f.name;
+      $("drop").classList.add("armed");
+    });
+  });
+  $("fileCur").addEventListener("change", function () {
+    var f = this.files[0]; if (!f) { return; }
+    readFile(f, function (d) {
+      state.curB64 = d; $("curName").textContent = f.name;
+      $("drop").classList.add("armed");
+    });
+  });
+
+  // ---- boot -------------------------------------------------------------
+  renderExamples();
+  renderThreads();
+  $("threadName").textContent = state.thread;
+
+  api("/health").then(function (h) {
+    $("healthBadge").textContent =
+      h.looks + " looks · " + (h.deterministic ? "deterministic narrator" : h.narrator) +
+      " · " + h.token_backend;
+  }).catch(function () { $("healthBadge").textContent = "API unreachable"; });
+
+  api("/graph").then(function (t) {
+    mermaidText = t;
+    $("mermaidSrc").textContent = t;
+  }).catch(function (e) {
+    $("mermaidSrc").textContent = "could not load graph: " + e.message;
+  });
+
+  // ---- narrator / model status -----------------------------------------
+  function renderModels(m) {
+    var box = $("modelBox");
+    var rows = "<table class='kv'>" +
+      "<tr><td class='k'>narrator</td><td class='v'>" + esc(m.narrator) + "</td></tr>" +
+      "<tr><td class='k'>deterministic</td><td class='v'>" + (m.deterministic ? "yes" : "no") + "</td></tr>";
+    if (m.gemini) {
+      var live = m.gemini.health.filter(function (h) { return !h.dead; }).length;
+      rows += "<tr><td class='k'>gemini model</td><td class='v'>" + esc(m.gemini.model) + "</td></tr>" +
+              "<tr><td class='k'>keys live</td><td class='v'>" + live + " / " + m.gemini.keys_total + "</td></tr>";
+      var calls = m.gemini.health.reduce(function (a, h) { return a + h.calls; }, 0);
+      var okc = m.gemini.health.reduce(function (a, h) { return a + h.ok; }, 0);
+      var tr = m.gemini.health.reduce(function (a, h) { return a + h.transient; }, 0);
+      if (calls) {
+        rows += "<tr><td class='k'>calls (ok / retried)</td><td class='v'>" +
+                okc + " / " + tr + " of " + calls + "</td></tr>";
+      }
+    }
+    if (m.rewrites != null) {
+      rows += "<tr><td class='k'>rewritten / fell back</td><td class='v'>" +
+              m.rewrites + " / " + m.fallbacks + "</td></tr>";
+    }
+    box.innerHTML = rows + "</table>";
+  }
+
+  function loadModels() {
+    api("/models").then(renderModels).catch(function () {
+      $("modelBox").innerHTML = '<p class="empty">unavailable</p>';
+    });
+  }
+
+  // ---- glossary ---------------------------------------------------------
+  var glossary = [];
+  function renderGlossary(filter) {
+    var box = $("glossaryBox");
+    var needle = (filter || "").toLowerCase();
+    var hits = glossary.filter(function (t) {
+      return !needle || t.term.toLowerCase().indexOf(needle) >= 0 ||
+             (t.why_it_matters || "").toLowerCase().indexOf(needle) >= 0;
+    }).slice(0, needle ? 4 : 3);
+    if (!hits.length) {
+      box.innerHTML = '<p class="empty">no matching term</p>';
+      return;
+    }
+    box.innerHTML = hits.map(function (t) {
+      return "<div style='margin-bottom:9px'>" +
+        "<div style='font-weight:650;font-size:12.5px'>" + esc(t.term) + "</div>" +
+        "<div style='font-size:11.5px;color:var(--muted);margin:2px 0'>" + esc(t.why_it_matters) + "</div>" +
+        "<div style='font-size:11.5px'>" + esc(t.summary) + " " +
+        "<a href='" + esc(t.source_url) + "' target='_blank' rel='noopener noreferrer'>source</a></div>" +
+        "</div>";
+    }).join("");
+  }
+
+  api("/knowledge").then(function (d) {
+    glossary = d.terms || [];
+    renderGlossary("");
+    var m = d.meta || {};
+    $("glossaryCredit").innerHTML = glossary.length
+      ? "Definitions from " + esc(m.source || "Wikipedia") +
+        ", <a href='" + esc(m.licence_url || "#") + "' target='_blank' rel='noopener noreferrer'>" +
+        esc(m.licence || "CC BY-SA 4.0") + "</a>. Snippets only, each linked to its article."
+      : "";
+  }).catch(function () { $("glossaryBox").innerHTML = '<p class="empty">unavailable</p>'; });
+
+  $("glossaryQ").addEventListener("input", function () { renderGlossary(this.value); });
+
+  loadThread();
+  loadProfile();
+  loadModels();
+})();
+</script>

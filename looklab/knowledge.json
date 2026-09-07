@@ -1,0 +1,161 @@
+{
+  "meta": {
+    "source": "English Wikipedia, REST summary endpoint",
+    "licence": "CC BY-SA 4.0",
+    "licence_url": "https://creativecommons.org/licenses/by-sa/4.0/",
+    "n_terms": 15,
+    "note": "Snippets only -- at most the first two sentences of each article's abstract, stored with the article URL, revision id and licence. Attribution is rendered in the UI beside every definition."
+  },
+  "terms": [
+    {
+      "term": "CIELAB",
+      "summary": "The CIELAB color space, also referred to as L*a*b*, is a color space defined by the International Commission on Illumination in 1976. It expresses color as three values: L* for perceptual lightness and a* and b* for the four unique colors of human vision: red, green, blue and yellow.",
+      "why_it_matters": "The colour space every LookLab measurement is taken in. Its a* and b* axes are the green-magenta and blue-yellow axes, which is why they map so directly onto Lightroom's Tint and Temp sliders.",
+      "source_title": "CIELAB color space",
+      "source_url": "https://en.wikipedia.org/wiki/CIELAB_color_space",
+      "revision": "1370652355",
+      "licence": "CC BY-SA 4.0",
+      "licence_url": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    {
+      "term": "colour grading",
+      "summary": "Color grading is a post-production process common to filmmaking and video editing of altering the appearance of an image for presentation in different environments on different devices. Various attributes of an image such as contrast, color, saturation, detail, black level, and white balance may be enhanced whether for motion pictures, videos, or still images.",
+      "why_it_matters": "The craft this whole application is about: altering the colour of an image for a stylistic result rather than a corrective one.",
+      "source_title": "Color grading",
+      "source_url": "https://en.wikipedia.org/wiki/Color_grading",
+      "revision": "1348792627",
+      "licence": "CC BY-SA 4.0",
+      "licence_url": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    {
+      "term": "white balance",
+      "summary": "In photography and image processing, color balance is the global adjustment of the intensities of the colors. An important goal of this adjustment is to render specific colors – particularly neutral colors like white or grey – correctly.",
+      "why_it_matters": "What the Temp and Tint sliders adjust. LookLab measures the residual cast as global a* and b*.",
+      "source_title": "Color balance",
+      "source_url": "https://en.wikipedia.org/wiki/Color_balance",
+      "revision": "1310731594",
+      "licence": "CC BY-SA 4.0",
+      "licence_url": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    {
+      "term": "colour temperature",
+      "summary": "Color temperature is a parameter describing the color of a visible light source by comparing it to the color of light emitted by an idealized opaque, non-reflective body, known as a black body. The temperature of the ideal emitter that matches the color most closely is defined as the color temperature of the original visible light source.",
+      "why_it_matters": "The warm-cool axis. LookLab uses b* as its proxy, because b* is the blue-yellow axis of CIELAB.",
+      "source_title": "Color temperature",
+      "source_url": "https://en.wikipedia.org/wiki/Color_temperature",
+      "revision": "1373605759",
+      "licence": "CC BY-SA 4.0",
+      "licence_url": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    {
+      "term": "chroma",
+      "summary": "Colorfulness, chroma and saturation are attributes of perceived color relating to chromatic intensity. As defined formally by the International Commission on Illumination (CIE) they respectively describe three different aspects of chromatic intensity, but the terms are often used loosely and interchangeably in contexts where these aspects are not clearly distinguished.",
+      "why_it_matters": "How colourful a pixel is, independent of how light it is. LookLab reports mean chroma and uses it to choose between Vibrance and Saturation.",
+      "source_title": "Colorfulness",
+      "source_url": "https://en.wikipedia.org/wiki/Colorfulness",
+      "revision": "1346385458",
+      "licence": "CC BY-SA 4.0",
+      "licence_url": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    {
+      "term": "hue",
+      "summary": "In color theory, hue is one of the properties of a color, defined in the CIECAM02 model as \"the degree to which a stimulus can be described as similar to or different from stimuli that are described as red, orange, yellow, green, blue, violet\", within certain theories of color vision.",
+      "why_it_matters": "The angle of a colour around the colour circle. LookLab measures a chroma-weighted circular mean hue per tonal zone, so grey pixels do not vote.",
+      "source_title": "Hue",
+      "source_url": "https://en.wikipedia.org/wiki/Hue",
+      "revision": "1373683936",
+      "licence": "CC BY-SA 4.0",
+      "licence_url": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    {
+      "term": "circular mean",
+      "summary": "In mathematics and statistics, a circular mean or angular mean is a mean designed for angles and similar cyclic quantities, such as times of day, and fractional parts of real numbers.",
+      "why_it_matters": "Why LookLab cannot average hues arithmetically: the mean of 359 degrees and 1 degree is 0, not 180.",
+      "source_title": "Circular mean",
+      "source_url": "https://en.wikipedia.org/wiki/Circular_mean",
+      "revision": "1360626084",
+      "licence": "CC BY-SA 4.0",
+      "licence_url": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    {
+      "term": "split toning",
+      "summary": "Cross processing is the deliberate processing of photographic film in a chemical solution intended for a different type of film. The effect was discovered independently by many different photographers often by mistake in the days of C-22 and E-4.",
+      "why_it_matters": "Tinting shadows and highlights different colours. LookLab measures the angular gap between the two as its 'split' feature.",
+      "source_title": "Cross processing",
+      "source_url": "https://en.wikipedia.org/wiki/Cross_processing",
+      "revision": "1359795384",
+      "licence": "CC BY-SA 4.0",
+      "licence_url": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    {
+      "term": "gamma correction",
+      "summary": "Gamma correction or gamma is a nonlinear operation used to encode and decode luminance in video or images.",
+      "why_it_matters": "Why measurements are taken in linear light rather than on the stored sRGB values: arithmetic on gamma-encoded numbers is not linear-light arithmetic.",
+      "source_title": "Gamma correction",
+      "source_url": "https://en.wikipedia.org/wiki/Gamma_correction",
+      "revision": "1363257494",
+      "licence": "CC BY-SA 4.0",
+      "licence_url": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    {
+      "term": "sRGB",
+      "summary": "sRGB is a color space, for use on monitors, printers, and the World Wide Web. It was initially proposed by HP and Microsoft in 1996 and became an official standard of the International Electrotechnical Commission (IEC) as IEC 61966-2-1:1999.",
+      "why_it_matters": "The colour space uploaded images are assumed to be in. skimage's rgb2lab handles the linearisation.",
+      "source_title": "SRGB",
+      "source_url": "https://en.wikipedia.org/wiki/SRGB",
+      "revision": "1372311503",
+      "licence": "CC BY-SA 4.0",
+      "licence_url": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    {
+      "term": "tone curve",
+      "summary": "In image editing, a curve is a remapping of image tonality, specified as a function from input level to output level, used as a way to emphasize colours or other elements in a picture.",
+      "why_it_matters": "What the Contrast slider applies. LookLab measures the result as the L* spread between the 5th and 95th percentiles.",
+      "source_title": "Curve (tonality)",
+      "source_url": "https://en.wikipedia.org/wiki/Curve_(tonality)",
+      "revision": "1345067802",
+      "licence": "CC BY-SA 4.0",
+      "licence_url": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    {
+      "term": "clipping",
+      "summary": "In digital photography and digital video, clipping is a result of capturing or processing an image where the intensity in a certain area falls outside the minimum and maximum intensity which can be represented. It is an instance of signal clipping in the image domain.",
+      "why_it_matters": "Detail lost at pure black or pure white. LookLab reports the fraction of pixels at L* < 1 and L* > 99 and flags it in critique.",
+      "source_title": "Clipping (photography)",
+      "source_url": "https://en.wikipedia.org/wiki/Clipping_(photography)",
+      "revision": "1355944110",
+      "licence": "CC BY-SA 4.0",
+      "licence_url": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    {
+      "term": "dynamic range",
+      "summary": "Dynamic range is the ratio between the largest and smallest measurable values of a specific quantity. It is often used in the context of signals, like sound and light.",
+      "why_it_matters": "The span between the darkest and brightest recorded detail.",
+      "source_title": "Dynamic range",
+      "source_url": "https://en.wikipedia.org/wiki/Dynamic_range",
+      "revision": "1372979842",
+      "licence": "CC BY-SA 4.0",
+      "licence_url": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    {
+      "term": "colour appearance model",
+      "summary": "A color appearance model (CAM) is a mathematical model that seeks to describe the perceptual aspects of human color vision, i.e. viewing conditions under which the appearance of a color does not tally with the corresponding physical measurement of the stimulus source.",
+      "why_it_matters": "Why perceptual lightness L* is not the same thing as the V in HSV, and why zone-splitting on V puts the wrong pixels in the wrong zones.",
+      "source_title": "Color appearance model",
+      "source_url": "https://en.wikipedia.org/wiki/Color_appearance_model",
+      "revision": "1339987039",
+      "licence": "CC BY-SA 4.0",
+      "licence_url": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    {
+      "term": "curse of dimensionality",
+      "summary": "The curse of dimensionality refers to various phenomena that arise when analyzing and organizing data in high-dimensional spaces that do not occur in low-dimensional settings such as the three-dimensional physical space of everyday experience. The expression was coined by Richard E.",
+      "why_it_matters": "Why LookLab matches on eleven weighted features rather than all twenty-five: in high dimensions with few samples, distances concentrate and everything looks equally far away.",
+      "source_title": "Curse of dimensionality",
+      "source_url": "https://en.wikipedia.org/wiki/Curse_of_dimensionality",
+      "revision": "1369800967",
+      "licence": "CC BY-SA 4.0",
+      "licence_url": "https://creativecommons.org/licenses/by-sa/4.0/"
+    }
+  ]
+}

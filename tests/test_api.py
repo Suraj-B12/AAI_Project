@@ -1,0 +1,236 @@
+"""HTTP-level tests against the real FastAPI app.
+
+These exercise the server the way the front end does, including the cases that
+would otherwise only show up live: an unknown thread, a corrupt upload, a
+budget below the safe floor, and concurrent posts to one thread.
+
+The app is imported with its data paths redirected to a temp directory, so the
+suite never reads or writes the demo databases.
+"""
+
+from __future__ import annotations
+
+import base64
+import importlib
+import io
+import os
+import threading
+
+import pytest
+from fastapi.testclient import TestClient
+from PIL import Image
+
+
+@pytest.fixture(scope="module")
+def client(tmp_path_factory):
+    """Import the server with its SQLite paths pointed at a temp directory."""
+    tmp = tmp_path_factory.mktemp("api")
+    from looklab import persistence
+
+    original_cp = persistence.DEFAULT_CHECKPOINT_PATH
+    original_st = persistence.DEFAULT_STORE_PATH
+    persistence.DEFAULT_CHECKPOINT_PATH = str(tmp / "cp.sqlite")
+    persistence.DEFAULT_STORE_PATH = str(tmp / "st.sqlite")
+
+    from looklab import server as server_module
+
+    server_module = importlib.reload(server_module)
+    try:
+        with TestClient(server_module.app) as c:
+            yield c
+    finally:
+        persistence.DEFAULT_CHECKPOINT_PATH = original_cp
+        persistence.DEFAULT_STORE_PATH = original_st
+
+
+def _jpeg_bytes(plate: str = "astronaut", size: int = 128) -> bytes:
+    from looklab.plates import base_plate
+
+    arr = (base_plate(plate, size) * 255).astype("uint8")
+    buf = io.BytesIO()
+    Image.fromarray(arr).save(buf, format="JPEG", quality=88)
+    return buf.getvalue()
+
+
+# --------------------------------------------------------------------------
+
+def test_health_reports_a_working_stack(client):
+    body = client.get("/health").json()
+    assert body["ok"] is True
+    assert body["looks"] >= 6, "knowledge base looks empty -- run tools.build_kb"
+    assert body["deterministic"] is True, "should default to the offline narrator"
+    assert body["token_backend"]
+
+
+def test_index_serves_the_front_end(client):
+    response = client.get("/")
+    assert response.status_code == 200
+    assert "LookLab" in response.text
+    for topic in ("T1", "T2", "T3", "T4"):
+        assert topic in response.text, f"rubric label {topic} missing from the UI"
+
+
+def test_graph_endpoint_returns_mermaid_from_the_compiled_object(client):
+    text = client.get("/graph").text
+    assert "graph TD" in text
+    assert "route_intent" in text and "respond" in text
+
+
+def test_looks_endpoint_lists_the_library(client):
+    body = client.get("/looks").json()
+    assert len(body["looks"]) >= 6
+    first = body["looks"][0]
+    assert {"id", "label", "notes", "sliders"} <= set(first)
+    assert body["meta"].get("heldout_plates")
+
+
+def test_chat_round_trip(client):
+    body = client.post(
+        "/chat", json={"message": "hey, what can you do?", "thread_id": "api-chat"}
+    ).json()
+    assert body["intent"] == "chat"
+    assert body["branch_node"] == "respond"
+    assert body["reply"]
+    assert body["telemetry"]["tokens_before"] >= 0
+
+
+def test_chat_achieve_builds_a_recipe_without_any_upload(client):
+    """The text-only spine: T2 accumulation must not depend on images."""
+    first = client.post(
+        "/chat",
+        json={"message": "how do i get the deep amber look?", "thread_id": "api-recipe"},
+    ).json()
+    assert first["intent"] == "achieve"
+    assert len(first["recipe"]) >= 1
+
+    second = client.post(
+        "/chat",
+        json={"message": "how do i get the teal and orange look?", "thread_id": "api-recipe"},
+    ).json()
+    assert len(second["recipe"]) > len(first["recipe"])
+    assert sorted({e["turn"] for e in second["recipe"]}) == [1, 2]
+
+
+def test_state_of_an_unknown_thread_is_empty_not_an_error(client):
+    body = client.get("/state/a-thread-nobody-ever-used").json()
+    assert body["exists"] is False
+    assert body["messages"] == [] and body["recipe"] == []
+
+
+def test_profile_is_written_and_readable_across_threads(client):
+    client.post(
+        "/chat",
+        json={
+            "message": "Hi, I'm Suraj. I shoot on a Fuji X-T4 and I like warm golden looks.",
+            "thread_id": "api-p1",
+            "user_id": "api-user",
+        },
+    )
+    body = client.get("/profile/api-user").json()
+    assert body["profile"].get("name") == "Suraj"
+    assert body["summary"]
+
+    other = client.post(
+        "/chat",
+        json={"message": "what should i try?", "thread_id": "api-p2", "user_id": "api-user"},
+    ).json()
+    assert other["profile"].get("name") == "Suraj"
+
+
+def test_threads_are_isolated_over_http(client):
+    client.post("/chat", json={"message": "how do i get the deep amber look?", "thread_id": "iso-a"})
+    client.post("/chat", json={"message": "hello", "thread_id": "iso-b"})
+    a = client.get("/state/iso-a").json()
+    b = client.get("/state/iso-b").json()
+    assert a["recipe"] and not b["recipe"]
+
+
+def test_image_upload_is_measured_and_never_enters_messages(client):
+    payload = base64.b64encode(_jpeg_bytes()).decode()
+    body = client.post(
+        "/chat",
+        json={"message": "what look is this?", "thread_id": "api-img", "reference_b64": payload},
+    ).json()
+    assert body["intent"] == "identify"
+    assert body["matches"], "an uploaded reference should produce matches"
+
+    state = client.get("/state/api-img").json()
+    assert "reference" in state["images"]
+    assert isinstance(state["images"]["reference"], dict)
+    for message in state["messages"]:
+        assert len(message["content"]) < 2048, "image data leaked into the transcript"
+
+
+def test_data_url_prefixed_base64_is_accepted(client):
+    payload = "data:image/jpeg;base64," + base64.b64encode(_jpeg_bytes()).decode()
+    response = client.post(
+        "/chat",
+        json={"message": "what look is this?", "thread_id": "api-dataurl", "reference_b64": payload},
+    )
+    assert response.status_code == 200
+    assert response.json()["matches"]
+
+
+def test_invalid_base64_returns_400_not_500(client):
+    response = client.post(
+        "/chat",
+        json={"message": "what look is this?", "thread_id": "api-bad", "reference_b64": "!!!!"},
+    )
+    assert response.status_code in (400, 422)
+
+
+def test_corrupt_image_still_answers(client):
+    payload = base64.b64encode(b"definitely not an image").decode()
+    response = client.post(
+        "/chat",
+        json={"message": "what look is this?", "thread_id": "api-corrupt", "reference_b64": payload},
+    )
+    assert response.status_code == 200
+    assert response.json()["reply"]
+
+
+def test_budget_below_the_floor_is_rejected_by_validation(client):
+    response = client.post("/chat", json={"message": "hi", "thread_id": "api-b", "budget": 5})
+    assert response.status_code == 422, "the budget floor must be enforced server-side"
+
+
+def test_budget_slider_changes_the_telemetry(client):
+    for i in range(6):
+        client.post("/chat", json={"message": f"tell me about look {i}", "thread_id": "api-budget"})
+    wide = client.post(
+        "/chat", json={"message": "and again", "thread_id": "api-budget", "budget": 4000}
+    ).json()["telemetry"]
+    tight = client.post(
+        "/chat", json={"message": "and again", "thread_id": "api-budget", "budget": 200}
+    ).json()["telemetry"]
+    assert tight["msgs_after_trim"] < wide["msgs_after_trim"]
+    assert tight["tokens_after"] < wide["tokens_after"]
+
+
+def test_concurrent_posts_to_one_thread_do_not_lose_turns(client):
+    """Without the per-thread lock, eight concurrent invokes collapse to one."""
+    thread = "api-concurrent"
+    errors: list[str] = []
+
+    def post(i: int) -> None:
+        try:
+            r = client.post(
+                "/chat", json={"message": f"message number {i}", "thread_id": thread}
+            )
+            if r.status_code != 200:
+                errors.append(f"{r.status_code}: {r.text[:120]}")
+        except Exception as exc:  # pragma: no cover - surfaced via assertion
+            errors.append(repr(exc))
+
+    workers = [threading.Thread(target=post, args=(i,)) for i in range(8)]
+    for w in workers:
+        w.start()
+    for w in workers:
+        w.join()
+
+    assert not errors, errors
+    state = client.get(f"/state/{thread}").json()
+    user_messages = [m for m in state["messages"] if m["role"] == "user"]
+    assert len(user_messages) == 8, (
+        f"expected 8 user turns, found {len(user_messages)} -- concurrent writes were lost"
+    )

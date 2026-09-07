@@ -1,0 +1,357 @@
+{
+  "source": "Wikimedia Commons",
+  "plates": [
+    {
+      "name": "portrait_daylight_0",
+      "title": "File:Sitting (squatting) for a Nadia Strid portrait.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Sitting_(squatting)_for_a_Nadia_Strid_portrait.jpg",
+      "licence": "CC BY 2.0",
+      "licence_url": "https://creativecommons.org/licenses/by/2.0",
+      "author": "Mary Constance from Memphis, USA",
+      "credit": "Sitting (squatting) for a Nadia Strid portrait Uploaded by Gary Dee",
+      "stats": {
+        "coverage": {
+          "shadow": 0.2572,
+          "mid": 0.5841,
+          "high": 0.1587
+        },
+        "contrast": 85.6,
+        "chroma": 26.2,
+        "L_p50": 38.5,
+        "a_global": 13.14,
+        "b_global": -0.67
+      },
+      "file": "portrait_daylight_0.jpg"
+    },
+    {
+      "name": "portrait_daylight_1",
+      "title": "File:1993-1994-Giardino Giusti (Verona)-testo e photo Paolo Villa-nA2-tesi Accademia Belle Arti Bologna-portone di Palazzo Giusti.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:1993-1994-Giardino_Giusti_(Verona)-testo_e_photo_Paolo_Villa-nA2-tesi_Accademia_Belle_Arti_Bologna-portone_di_Palazzo_Giusti.jpg",
+      "licence": "CC BY-SA 4.0",
+      "licence_url": "https://creativecommons.org/licenses/by-sa/4.0",
+      "author": "Paolo Villa",
+      "credit": "Own work",
+      "stats": {
+        "coverage": {
+          "shadow": 0.5938,
+          "mid": 0.3747,
+          "high": 0.0315
+        },
+        "contrast": 61.5,
+        "chroma": 4.8,
+        "L_p50": 16.7,
+        "a_global": 0.6,
+        "b_global": 1.53
+      },
+      "file": "portrait_daylight_1.jpg"
+    },
+    {
+      "name": "landscape_sky_0",
+      "title": "File:Field, corn, Liechtenstein, Mountains, Alps, Vaduz, sky, clouds, landscape.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Field,_corn,_Liechtenstein,_Mountains,_Alps,_Vaduz,_sky,_clouds,_landscape.jpg",
+      "licence": "Public domain",
+      "licence_url": "",
+      "author": "Paranoid",
+      "credit": "Self-published work by Paranoid",
+      "stats": {
+        "coverage": {
+          "shadow": 0.056,
+          "mid": 0.6202,
+          "high": 0.3238
+        },
+        "contrast": 62.6,
+        "chroma": 23.4,
+        "L_p50": 67.0,
+        "a_global": -1.81,
+        "b_global": -4.42
+      },
+      "file": "landscape_sky_0.jpg"
+    },
+    {
+      "name": "landscape_sky_1",
+      "title": "File:Large cloud over Mexican landscape.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Large_cloud_over_Mexican_landscape.jpg",
+      "licence": "CC BY-SA 4.0",
+      "licence_url": "https://creativecommons.org/licenses/by-sa/4.0",
+      "author": "Tomascastelazo",
+      "credit": "Own work",
+      "stats": {
+        "coverage": {
+          "shadow": 0.0903,
+          "mid": 0.6846,
+          "high": 0.2251
+        },
+        "contrast": 73.7,
+        "chroma": 19.5,
+        "L_p50": 57.9,
+        "a_global": 1.04,
+        "b_global": -2.6
+      },
+      "file": "landscape_sky_1.jpg"
+    },
+    {
+      "name": "interior_lowkey_0",
+      "title": "File:Casa Batll\u00f3 (Antoni Gaudi) (interior), 43, Passeig de Gr\u00e0cia, Eixample, Barcelona, Catalonia, Spain.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Casa_Batll%C3%B3_(Antoni_Gaudi)_(interior),_43,_Passeig_de_Gr%C3%A0cia,_Eixample,_Barcelona,_Catalonia,_Spain.jpg",
+      "licence": "CC BY-SA 3.0",
+      "licence_url": "https://creativecommons.org/licenses/by-sa/3.0",
+      "author": "Mstyslav Chernov",
+      "credit": "Self-photographed , http://mstyslav-chernov.com/",
+      "stats": {
+        "coverage": {
+          "shadow": 0.1853,
+          "mid": 0.6661,
+          "high": 0.1486
+        },
+        "contrast": 80.7,
+        "chroma": 23.6,
+        "L_p50": 44.6,
+        "a_global": 5.91,
+        "b_global": -0.36
+      },
+      "file": "interior_lowkey_0.jpg"
+    },
+    {
+      "name": "interior_lowkey_1",
+      "title": "File:Copped Hall partly restored first floor room, Epping, Essex, England.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Copped_Hall_partly_restored_first_floor_room,_Epping,_Essex,_England.jpg",
+      "licence": "CC BY-SA 4.0",
+      "licence_url": "https://creativecommons.org/licenses/by-sa/4.0",
+      "author": "Acabashi",
+      "credit": "Own work",
+      "stats": {
+        "coverage": {
+          "shadow": 0.0602,
+          "mid": 0.7755,
+          "high": 0.1643
+        },
+        "contrast": 64.2,
+        "chroma": 8.3,
+        "L_p50": 51.9,
+        "a_global": 0.21,
+        "b_global": -2.19
+      },
+      "file": "interior_lowkey_1.jpg"
+    },
+    {
+      "name": "food_saturated_0",
+      "title": "File:Nordic Bar, Fitzrovia, London (3911505025).jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Nordic_Bar,_Fitzrovia,_London_(3911505025).jpg",
+      "licence": "CC BY-SA 2.0",
+      "licence_url": "https://creativecommons.org/licenses/by-sa/2.0",
+      "author": "Ewan Munro from London, UK",
+      "credit": "Nordic Bar, Fitzrovia, London Uploaded by tm",
+      "stats": {
+        "coverage": {
+          "shadow": 0.6371,
+          "mid": 0.3413,
+          "high": 0.0216
+        },
+        "contrast": 64.7,
+        "chroma": 14.0,
+        "L_p50": 9.3,
+        "a_global": -6.64,
+        "b_global": 3.43
+      },
+      "file": "food_saturated_0.jpg"
+    },
+    {
+      "name": "food_saturated_1",
+      "title": "File:Irokanten, The colourful agar jelly within the New Year's dishes, Niigata, Japan, January 2026.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Irokanten,_The_colourful_agar_jelly_within_the_New_Year%27s_dishes,_Niigata,_Japan,_January_2026.jpg",
+      "licence": "CC BY-SA 4.0",
+      "licence_url": "https://creativecommons.org/licenses/by-sa/4.0",
+      "author": "Tail furry",
+      "credit": "Own work",
+      "stats": {
+        "coverage": {
+          "shadow": 0.1567,
+          "mid": 0.7053,
+          "high": 0.138
+        },
+        "contrast": 78.0,
+        "chroma": 35.3,
+        "L_p50": 49.4,
+        "a_global": 12.83,
+        "b_global": 28.8
+      },
+      "file": "food_saturated_1.jpg"
+    },
+    {
+      "name": "street_neutral_0",
+      "title": "File:New York City at night HDR.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:New_York_City_at_night_HDR.jpg",
+      "licence": "CC BY-SA 2.0",
+      "licence_url": "https://creativecommons.org/licenses/by-sa/2.0",
+      "author": "Paulo Barcellos Jr.",
+      "credit": "https://www.flickr.com/photos/paulobar/230134559/",
+      "stats": {
+        "coverage": {
+          "shadow": 0.82,
+          "mid": 0.1587,
+          "high": 0.0212
+        },
+        "contrast": 54.7,
+        "chroma": 3.4,
+        "L_p50": 7.7,
+        "a_global": 0.31,
+        "b_global": 2.99
+      },
+      "file": "street_neutral_0.jpg"
+    },
+    {
+      "name": "street_neutral_1",
+      "title": "File:New York City (New York, USA), Empire State Building -- 2012 -- 6436.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:New_York_City_(New_York,_USA),_Empire_State_Building_--_2012_--_6436.jpg",
+      "licence": "CC BY-SA 4.0",
+      "licence_url": "https://creativecommons.org/licenses/by-sa/4.0",
+      "author": "Dietmar Rabich",
+      "credit": "Own work",
+      "stats": {
+        "coverage": {
+          "shadow": 0.2938,
+          "mid": 0.5764,
+          "high": 0.1298
+        },
+        "contrast": 77.7,
+        "chroma": 6.2,
+        "L_p50": 39.4,
+        "a_global": 1.51,
+        "b_global": -1.24
+      },
+      "file": "street_neutral_1.jpg"
+    },
+    {
+      "name": "nature_green_0",
+      "title": "File:Green trees at Grasslaw - geograph.org.uk - 433907.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Green_trees_at_Grasslaw_-_geograph.org.uk_-_433907.jpg",
+      "licence": "CC BY-SA 2.0",
+      "licence_url": "https://creativecommons.org/licenses/by-sa/2.0",
+      "author": "Les Harvey",
+      "credit": "From geograph.org.uk",
+      "stats": {
+        "coverage": {
+          "shadow": 0.1128,
+          "mid": 0.6772,
+          "high": 0.21
+        },
+        "contrast": 78.7,
+        "chroma": 40.8,
+        "L_p50": 51.1,
+        "a_global": -21.86,
+        "b_global": 34.08
+      },
+      "file": "nature_green_0.jpg"
+    },
+    {
+      "name": "nature_green_1",
+      "title": "File:Trees in Shave Green inclosure, New Forest - geograph.org.uk - 786758.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Trees_in_Shave_Green_inclosure,_New_Forest_-_geograph.org.uk_-_786758.jpg",
+      "licence": "CC BY-SA 2.0",
+      "licence_url": "https://creativecommons.org/licenses/by-sa/2.0",
+      "author": "Peter Facey",
+      "credit": "From geograph.org.uk",
+      "stats": {
+        "coverage": {
+          "shadow": 0.0891,
+          "mid": 0.8255,
+          "high": 0.0854
+        },
+        "contrast": 58.1,
+        "chroma": 22.9,
+        "L_p50": 54.5,
+        "a_global": -7.6,
+        "b_global": 20.22
+      },
+      "file": "nature_green_1.jpg"
+    },
+    {
+      "name": "golden_hour_0",
+      "title": "File:Golden hour at bekol savannah.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Golden_hour_at_bekol_savannah.jpg",
+      "licence": "CC BY-SA 4.0",
+      "licence_url": "https://creativecommons.org/licenses/by-sa/4.0",
+      "author": "Candra Firmansyah",
+      "credit": "Own work",
+      "stats": {
+        "coverage": {
+          "shadow": 0.2368,
+          "mid": 0.4929,
+          "high": 0.2704
+        },
+        "contrast": 83.4,
+        "chroma": 11.4,
+        "L_p50": 51.9,
+        "a_global": 1.23,
+        "b_global": 9.35
+      },
+      "file": "golden_hour_0.jpg"
+    },
+    {
+      "name": "golden_hour_1",
+      "title": "File:Dendermonde town hall and belfry during golden hour (DSCF0501).jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Dendermonde_town_hall_and_belfry_during_golden_hour_(DSCF0501).jpg",
+      "licence": "CC BY 4.0",
+      "licence_url": "https://creativecommons.org/licenses/by/4.0",
+      "author": "Trougnouf (Benoit Brummer)",
+      "credit": "Own work",
+      "stats": {
+        "coverage": {
+          "shadow": 0.1013,
+          "mid": 0.6774,
+          "high": 0.2213
+        },
+        "contrast": 74.5,
+        "chroma": 14.2,
+        "L_p50": 64.5,
+        "a_global": 3.02,
+        "b_global": -6.45
+      },
+      "file": "golden_hour_1.jpg"
+    },
+    {
+      "name": "snow_highkey_0",
+      "title": "File:Pieter Bruegel the Elder - Hunters in the Snow (Winter) - Google Art Project.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Pieter_Bruegel_the_Elder_-_Hunters_in_the_Snow_(Winter)_-_Google_Art_Project.jpg",
+      "licence": "Public domain",
+      "licence_url": "",
+      "author": "Pieter Brueghel the Elder",
+      "credit": "WgFmzFNNN74nUg at Google Cultural Institute maximum zoom level",
+      "stats": {
+        "coverage": {
+          "shadow": 0.2367,
+          "mid": 0.5226,
+          "high": 0.2407
+        },
+        "contrast": 86.8,
+        "chroma": 14.0,
+        "L_p50": 46.3,
+        "a_global": -2.59,
+        "b_global": 12.26
+      },
+      "file": "snow_highkey_0.jpg"
+    },
+    {
+      "name": "snow_highkey_1",
+      "title": "File:Dampfzug am Brocken in Winterlandschaft (2).jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Dampfzug_am_Brocken_in_Winterlandschaft_(2).jpg",
+      "licence": "CC BY-SA 2.0",
+      "licence_url": "https://creativecommons.org/licenses/by-sa/2.0",
+      "author": "Markus Trienke",
+      "credit": "Harzquerbahn im Februar 2012",
+      "stats": {
+        "coverage": {
+          "shadow": 0.0241,
+          "mid": 0.4849,
+          "high": 0.491
+        },
+        "contrast": 63.4,
+        "chroma": 11.6,
+        "L_p50": 73.8,
+        "a_global": -0.65,
+        "b_global": -10.67
+      },
+      "file": "snow_highkey_1.jpg"
+    }
+  ]
+}
