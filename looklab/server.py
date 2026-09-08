@@ -335,6 +335,109 @@ def state(thread_id: str) -> dict[str, Any]:
     return _state_payload(thread_id)
 
 
+@app.get("/trace/{thread_id}")
+def trace(thread_id: str) -> dict[str, Any]:
+    """Which graph nodes actually ran, turn by turn.
+
+    Reconstructed from the checkpointer's own history rather than from a log
+    the app writes about itself. Every checkpoint records the node that was
+    about to execute, so the sequence is evidence about what the graph did,
+    not a claim about it.
+
+    This is the clearest available demonstration that the conditional edge is
+    not decoration: an ``achieve`` turn runs
+    ``analyze_pair -> delta -> recipe_build`` and a ``chat`` turn skips all
+    three and goes straight to ``respond``.
+    """
+    config = {"configurable": {"thread_id": thread_id}}
+    try:
+        history = list(GRAPH.get_state_history(config))
+    except Exception:
+        return {"thread_id": thread_id, "turns": [], "exists": False}
+
+    # Oldest first: the history comes back newest first.
+    history.reverse()
+
+    turns: list[dict[str, Any]] = []
+    current: dict[str, Any] | None = None
+    for snapshot in history:
+        meta = snapshot.metadata or {}
+        upcoming = list(snapshot.next or [])
+
+        if meta.get("source") == "input":
+            # A new invoke starts here. The message is NOT read from this
+            # checkpoint: at the input step the incoming message has not been
+            # merged into the channel yet, so the newest human message is still
+            # the previous turn's, and every turn came out labelled with the
+            # one before it.
+            current = {
+                "turn": len(turns) + 1,
+                "message": "",
+                "nodes": [],
+                "intent": None,
+                "branch_node": None,
+                "recipe_before": None,
+                "recipe_added": 0,
+                "recipe_total": 0,
+                "telemetry": {},
+            }
+            turns.append(current)
+            continue
+
+        if current is None:
+            continue
+
+        values = snapshot.values or {}
+        # The recipe channel is append-only (T2's operator.add), so its length
+        # is a running total across the whole thread. A per-turn view has to
+        # report the increment, or turn five of a thread reads as though it
+        # produced sixteen slider moves when it produced eight.
+        if current["recipe_before"] is None:
+            current["recipe_before"] = len(values.get("recipe") or [])
+        if not current["message"]:
+            for message in reversed(values.get("messages") or []):
+                if getattr(message, "type", "") == "human":
+                    from .context import _text_of
+
+                    current["message"] = _text_of(message)[:160]
+                    break
+
+        for node in upcoming:
+            if node.startswith("__"):
+                continue
+            if node not in current["nodes"]:
+                current["nodes"].append(node)
+
+        if values.get("intent"):
+            current["intent"] = values["intent"]
+            current["branch_node"] = BRANCH_MAP.get(values["intent"])
+        if values.get("telemetry"):
+            current["telemetry"] = values["telemetry"]
+        current["recipe_total"] = len(values.get("recipe") or [])
+
+    # Drop a turn that never executed anything (an interrupted invoke).
+    turns = [t for t in turns if t["nodes"]]
+    for turn in turns:
+        # The recipe channel is not cleared between turns, so a chat turn that
+        # follows an achieve turn still carries the previous turn's recipe.
+        # Reporting it here would claim the chat turn built one. Only a turn
+        # that actually ran recipe_build gets to say it produced a recipe.
+        if "recipe_build" not in turn["nodes"]:
+            turn["recipe_added"] = 0
+        else:
+            turn["recipe_added"] = turn["recipe_total"] - (turn["recipe_before"] or 0)
+        turn.pop("recipe_before", None)
+        turn["nodes"] = ["__start__"] + turn["nodes"] + ["__end__"]
+
+    return {
+        "thread_id": thread_id,
+        "exists": bool(turns),
+        "turns": turns,
+        "all_nodes": [n for n in GRAPH.get_graph().nodes if not n.startswith("__")],
+        "branch_map": BRANCH_MAP,
+    }
+
+
 @app.delete("/thread/{thread_id}")
 def delete_thread(thread_id: str) -> dict[str, Any]:
     """Delete a conversation permanently, and give the disk back.

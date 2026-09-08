@@ -741,6 +741,8 @@ class GeminiNarrator:
         self.fallbacks = 0
         self.verbatim = 0
         self.answers = 0
+        self.grounded = 0
+        self.ungrounded = 0
 
     # Replies whose payload is a FACT ABOUT THE USER rather than a computed
     # number are returned verbatim. The model is good at warming up advice and
@@ -793,13 +795,99 @@ class GeminiNarrator:
         "reply does not.*"
     )
 
-    def answer_question(self, text: str, profile: dict) -> str | None:
-        """Answer a general question with the model, clearly marked as such.
+    def _answer_from_sources(self, text: str, sources: list) -> str | None:
+        """Answer strictly from retrieved passages, with citations. None on failure."""
+        from . import research
 
-        Returns None on any failure so the caller falls back to saying plainly
-        that it cannot answer -- which is the correct offline behaviour and a
-        better outcome than a guess.
+        prompt = (
+            f"Question: {text}\n\n"
+            f"Sources:\n\n{research.format_sources(sources)}\n\n"
+            f"Answer the question using only these sources, citing them inline."
+        )
+        try:
+            answer = self._pool.generate(
+                prompt,
+                system=self.GROUNDED_SYSTEM,
+                max_output_tokens=900,
+                temperature=0.2,
+                deadline=self._deadline,
+            )
+        except Exception:
+            self.fallbacks += 1
+            return None
+        answer = (answer or "").strip()
+        if not answer:
+            self.fallbacks += 1
+            return None
+
+        # The model said the sources do not cover this. Fall through to the
+        # unaided path rather than returning nothing: "I could not verify
+        # this, but here is what I know" is more useful than silence, as long
+        # as the two are told apart. The a6700 question is the case in point --
+        # Wikipedia does not list its log profiles, but the answer is known.
+        if answer.upper().startswith("INSUFFICIENT_SOURCES"):
+            return None
+
+        # Only claim the answer is grounded if it actually cites something.
+        # An uncited answer went to the model with sources and came back
+        # ignoring them, which is exactly the case the marker must not cover.
+        if not re.search(r"\[\d+\]", answer):
+            self.ungrounded += 1
+            return answer + self.ANSWER_FOOTER
+
+        self.grounded += 1
+        return f"{answer}\n\n{research.format_citations(sources)}{self.GROUNDED_FOOTER}"
+
+    GROUNDED_SYSTEM = (
+        "You are the assistant inside LookLab, a colour-grading tool for "
+        "photographers. Answer the question USING ONLY the numbered sources "
+        "provided.\n"
+        "RULES:\n"
+        "1. Every factual claim must come from a source. Cite it inline as "
+        "[1], [2] and so on.\n"
+        "2. If the sources do not actually answer the question, reply with "
+        "exactly INSUFFICIENT_SOURCES on the first line and nothing else. Do "
+        "not fill the gap from memory here -- another step handles that.\n"
+        "3. Partial coverage is fine: answer the part the sources support and "
+        "say which part they do not.\n"
+        "3. Two short paragraphs at most. No preamble, no sign-off, no "
+        "headings.\n"
+        "4. Never claim anything about LookLab itself. It measures an "
+        "uploaded photo's colour, recommends Lightroom sliders, and critiques "
+        "an edit. It does not apply LUTs, transform footage or handle video.\n"
+        "Plain markdown."
+    )
+
+    GROUNDED_FOOTER = (
+        "\n\n---\n*Written by a language model from the sources above, not "
+        "measured. Follow the links to check it.*"
+    )
+
+    def answer_question(self, text: str, profile: dict) -> str | None:
+        """Answer a general question, grounded in retrieved sources when possible.
+
+        Two paths, and the difference is visible to the user:
+
+        * **Grounded** -- sources were found, the model was given only those,
+          and the answer carries inline citations plus the links.
+        * **Ungrounded** -- nothing relevant was retrievable, so the model
+          answers from its own weights and the reply says so plainly.
+
+        Returns None on any failure so the caller falls back to saying it
+        cannot answer, which is better than a guess.
         """
+        try:
+            from . import research
+
+            sources = research.retrieve(text)
+        except Exception:
+            sources = []
+
+        if sources:
+            grounded = self._answer_from_sources(text, sources)
+            if grounded:
+                return grounded
+
         context = ""
         camera = (profile or {}).get("camera")
         if camera:
@@ -824,6 +912,7 @@ class GeminiNarrator:
             self.fallbacks += 1
             return None
         self.answers += 1
+        self.ungrounded += 1
         return answer + self.ANSWER_FOOTER
 
     def narrate(self, intent: str, facts: dict) -> str:
@@ -880,6 +969,8 @@ class ProviderChatModel:
         self.fallbacks = 0
         self.verbatim = 0
         self.answers = 0
+        self.grounded = 0
+        self.ungrounded = 0
 
     # Replies whose payload is a FACT ABOUT THE USER rather than a computed
     # number are returned verbatim. The model is good at warming up advice and

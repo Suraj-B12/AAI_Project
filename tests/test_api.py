@@ -482,3 +482,103 @@ def test_no_keys_anywhere_is_not_an_error(tmp_path, monkeypatch):
 
     assert gem.load_keys() == []
     assert gem.GeminiPool([]).usable == 0
+
+
+# --------------------------------------------------------------------------
+# State transitions
+# --------------------------------------------------------------------------
+
+def test_trace_reports_the_real_node_sequence_per_turn(client):
+    """The transition view is rebuilt from the checkpointer, not from a log.
+
+    This is the clearest evidence the conditional edge is not decoration: four
+    intents produce four different paths through the graph.
+    """
+    thread = "trace-thread"
+    for message in [
+        "how do i get the deep amber look?",
+        "hello there",
+        "what look is teal and orange?",
+        "what's wrong with my edit?",
+    ]:
+        client.post("/chat", json={"message": message, "thread_id": thread})
+
+    body = client.get(f"/trace/{thread}").json()
+    assert body["exists"] is True
+    assert len(body["turns"]) == 4
+
+    by_intent = {t["intent"]: t["nodes"] for t in body["turns"]}
+    assert "analyze_pair" in by_intent["achieve"]
+    assert "delta" in by_intent["achieve"] and "recipe_build" in by_intent["achieve"]
+    assert "match" in by_intent["identify"]
+    assert "critique" in by_intent["critique"]
+
+    # The chat branch runs NO analysis node -- that is the whole point of it.
+    for node in ("analyze_pair", "analyze_ref", "analyze_cur", "match", "delta", "critique"):
+        assert node not in by_intent["chat"], f"chat should not run {node}"
+
+    # Every turn reads and writes long-term memory.
+    for turn in body["turns"]:
+        assert turn["nodes"][1] == "load_profile"
+        assert "save_profile" in turn["nodes"]
+
+    # Four intents, four distinct paths.
+    paths = {tuple(t["nodes"]) for t in body["turns"]}
+    assert len(paths) == 4
+
+
+def test_trace_labels_each_turn_with_its_own_message(client):
+    """The message must not be off by one.
+
+    At the input checkpoint the incoming message has not been merged yet, so
+    reading it there labelled every turn with the previous turn's text.
+    """
+    thread = "trace-labels"
+    messages = ["how do i get the deep amber look?", "hello there"]
+    for message in messages:
+        client.post("/chat", json={"message": message, "thread_id": thread})
+
+    turns = client.get(f"/trace/{thread}").json()["turns"]
+    assert [t["message"] for t in turns] == messages
+
+
+def test_trace_of_an_unknown_thread_is_empty_not_an_error(client):
+    body = client.get("/trace/no-such-thread-anywhere").json()
+    assert body["exists"] is False
+    assert body["turns"] == []
+
+
+def test_trace_ui_button_exists(client):
+    page = client.get("/").text
+    assert "showTrace" in page
+    assert "State transitions" in page
+
+
+def test_trace_reports_what_each_turn_added_not_the_running_total(client):
+    """The recipe channel is append-only, so its length is a thread total.
+
+    Reported raw, the second achieve turn of a thread claims sixteen slider
+    moves when it produced eight, and every chat turn in between inherits the
+    previous turn's count.
+    """
+    thread = "trace-recipe"
+    for message in [
+        "how do i get the deep amber look?",
+        "hi there",
+        "how do i get the teal and orange look?",
+    ]:
+        client.post("/chat", json={"message": message, "thread_id": thread})
+
+    turns = client.get(f"/trace/{thread}").json()["turns"]
+    first, chat, second = turns
+
+    assert first["recipe_added"] > 0
+    assert first["recipe_added"] == first["recipe_total"], "the first recipe IS the total"
+
+    assert chat["recipe_added"] == 0, "a chat turn built no recipe"
+
+    assert second["recipe_added"] == second["recipe_total"] - first["recipe_total"]
+    assert second["recipe_total"] > second["recipe_added"], (
+        "the running total should exceed this turn's increment -- that growth "
+        "is the append-only reducer being visible"
+    )

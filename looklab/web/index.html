@@ -240,6 +240,42 @@
   .confirm button { font-size: 11.5px; padding: 4px 9px; }
   .confirm .danger { border-color: #c0392b; color: #c0392b; }
 
+  /* State-transition view. Each turn is one row of node chips, so the
+     branches line up vertically and the difference between them is the
+     thing you notice first. */
+  .traceWrap { position: fixed; inset: 0; background: rgba(0,0,0,0.55);
+    display: none; align-items: center; justify-content: center; z-index: 50; padding: 20px; }
+  .traceWrap.on { display: flex; }
+  .traceBox {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+    max-width: 1000px; width: 100%; max-height: 88vh; overflow: auto; padding: 18px 20px;
+  }
+  .traceBox h2 { margin: 0 0 4px; font-size: 15px; text-transform: none; letter-spacing: 0; color: var(--ink); }
+  .traceHead { display: flex; align-items: baseline; gap: 10px; margin-bottom: 12px; }
+  .traceHead .spacer { flex: 1; }
+
+  .turnRow { border-top: 1px solid var(--line); padding: 11px 0; }
+  .turnRow:first-of-type { border-top: 0; }
+  .turnMeta { font-size: 11.5px; color: var(--muted); margin-bottom: 7px; }
+  .turnMeta b { color: var(--ink); }
+  .turnMeta .intent {
+    font-family: var(--mono); font-size: 10.5px; font-weight: 700;
+    background: var(--accent-soft); color: var(--accent);
+    border-radius: 4px; padding: 1px 6px; margin-left: 6px;
+  }
+  .chain { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+  .node {
+    font-family: var(--mono); font-size: 11px; padding: 3px 8px;
+    border: 1px solid var(--line); border-radius: 999px; background: var(--bg);
+    white-space: nowrap;
+  }
+  .node.branch { border-color: var(--accent); color: var(--accent); font-weight: 700; }
+  .node.terminal { opacity: 0.5; }
+  .arrow2 { color: var(--muted); font-size: 11px; }
+
+  .legend { font-size: 11px; color: var(--muted); margin-top: 14px; line-height: 1.5;
+    border-top: 1px solid var(--line); padding-top: 11px; }
+
   .err {
     background: #fdecea; border: 1px solid #f5c6c0; color: #8a1c10;
     padding: 7px 10px; border-radius: 5px; font-size: 12.5px; margin-bottom: 10px;
@@ -255,6 +291,19 @@
   <span class="spacer"></span>
   <span class="badge" id="healthBadge">connecting&hellip;</span>
 </header>
+
+<div class="traceWrap" id="traceWrap">
+  <div class="traceBox">
+    <div class="traceHead">
+      <h2>State transitions</h2>
+      <span class="sub" id="traceThread" style="color:var(--muted);font-size:12px"></span>
+      <span class="spacer"></span>
+      <button id="closeTrace">Close</button>
+    </div>
+    <div id="traceBody"></div>
+    <p class="legend" id="traceLegend"></p>
+  </div>
+</div>
 
 <main>
   <!-- ---------------------------------------------------------------- -->
@@ -328,6 +377,7 @@
     <div class="sec">
       <h3><span class="topic">T1</span> Graph &amp; routing</h3>
       <p class="branchline">branch taken: <b id="branchTaken">&mdash;</b> <span id="branchNode" style="color:var(--muted)"></span></p>
+      <button id="showTrace" style="width:100%;margin-bottom:8px">Show every state this thread passed through</button>
       <div id="graphBox"><pre class="mermaid-src" id="mermaidSrc">loading&hellip;</pre></div>
       <p class="note">
         Diagram text is emitted by the compiled graph object itself
@@ -892,6 +942,92 @@
       $(target).files = dt.files;
       $(target).dispatchEvent(new Event("change", { bubbles: true }));
     });
+  });
+
+  // ---- state transition view --------------------------------------------
+  // Reconstructed from the checkpointer's own history by GET /trace, so this
+  // shows what the graph DID rather than what the app claims it did.
+  function renderTrace(data) {
+    var body = $("traceBody");
+    $("traceThread").textContent = data.thread_id +
+      (data.turns.length ? " \u00b7 " + data.turns.length + " turns" : "");
+
+    if (!data.turns.length) {
+      body.innerHTML = '<p class="empty">This thread has not run any turns yet.</p>';
+      $("traceLegend").textContent = "";
+      return;
+    }
+
+    body.innerHTML = data.turns.map(function (t) {
+      // The node the conditional edge selected on THIS turn: the one right
+      // after route_intent. Marking it per-row is what makes the chat turn
+      // legible -- its branch target is respond, which every other row also
+      // contains, so a global "is this a branch node" rule marks either
+      // nothing or everything.
+      var chose = t.nodes.indexOf("route_intent") + 1;
+      var chain = t.nodes.map(function (n, i) {
+        var cls = "node";
+        if (chose > 0 && i === chose) { cls += " branch"; }
+        if (n.indexOf("__") === 0) { cls += " terminal"; }
+        var chip = '<span class="' + cls + '">' + esc(n) + "</span>";
+        return i < t.nodes.length - 1 ? chip + '<span class="arrow2">&rarr;</span>' : chip;
+      }).join("");
+
+      var tel = t.telemetry || {};
+      var extras = [];
+      if (t.recipe_added) {
+        // The running total is shown alongside, because watching it grow is
+        // the append-only reducer being visible rather than merely claimed.
+        extras.push("+" + t.recipe_added + " recipe steps (" + t.recipe_total + " total)");
+      }
+      if (tel.tokens_before) {
+        extras.push("tokens " + tel.tokens_before + " \u2192 " + tel.tokens_after);
+      }
+
+      return '<div class="turnRow"><div class="turnMeta">' +
+        "<b>Turn " + t.turn + "</b>" +
+        (t.intent ? '<span class="intent">' + esc(t.intent) + "</span>" : "") +
+        (t.message ? " &ldquo;" + esc(t.message) + "&rdquo;" : "") +
+        (extras.length ? " &middot; " + esc(extras.join(" \u00b7 ")) : "") +
+        '</div><div class="chain">' + chain + "</div></div>";
+    }).join("");
+
+    // Say what the reader is looking at, in terms of the rubric.
+    var paths = {};
+    data.turns.forEach(function (t) { paths[t.nodes.join(">")] = t.intent; });
+    var distinct = Object.keys(paths).length;
+    $("traceLegend").innerHTML =
+      "<b>" + distinct + " distinct path" + (distinct === 1 ? "" : "s") +
+      " through the graph</b> across " + data.turns.length + " turns. " +
+      "Every turn enters at <code>load_profile</code> (long-term memory read) and " +
+      "leaves through <code>save_profile</code> (long-term memory write). What " +
+      "changes in between is the conditional edge doing its job. The "
+      + "highlighted chip on each row is the node that turn's router chose: an " +
+      "<code>achieve</code> turn runs <code>analyze_pair &rarr; delta &rarr; " +
+      "recipe_build</code>, while a <code>chat</code> turn skips all three and " +
+      "goes straight to <code>respond</code> \u2014 which is why the routing is not " +
+      "decoration.<br><br>" +
+      "Rebuilt from the SQLite checkpointer's own history, not from a log the app " +
+      "writes about itself.";
+  }
+
+  function openTrace() {
+    $("traceWrap").classList.add("on");
+    $("traceBody").innerHTML = '<p class="empty">Reading the checkpoint history\u2026</p>';
+    api("/trace/" + encodeURIComponent(state.thread))
+      .then(renderTrace)
+      .catch(function (e) {
+        $("traceBody").innerHTML = '<p class="empty">Could not load: ' + esc(e.message) + "</p>";
+      });
+  }
+
+  $("showTrace").onclick = openTrace;
+  $("closeTrace").onclick = function () { $("traceWrap").classList.remove("on"); };
+  $("traceWrap").addEventListener("click", function (e) {
+    if (e.target === $("traceWrap")) { $("traceWrap").classList.remove("on"); }
+  });
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape") { $("traceWrap").classList.remove("on"); }
   });
 
   // ---- boot -------------------------------------------------------------

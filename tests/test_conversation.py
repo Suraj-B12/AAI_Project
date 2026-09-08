@@ -294,3 +294,76 @@ def test_forget_a_note_by_phrase(app):
     say(app, "remember that I print on matte paper")
     _reply, result = say(app, "forget that I print on matte paper")
     assert not (result["profile"].get("notes") or [])
+
+
+# --------------------------------------------------------------------------
+# Retrieval grounding
+# --------------------------------------------------------------------------
+
+def test_search_query_strips_conversational_scaffolding():
+    from looklab.research import build_query
+
+    query = build_query("what's the difference between log and rec709?")
+    assert "difference" not in query and "between" not in query
+    assert "log" in query and "rec709" in query
+
+
+def test_short_queries_get_a_subject_hint():
+    """'lut' alone is a desert in Iran."""
+    from looklab.research import DOMAIN_HINT, build_query
+
+    assert DOMAIN_HINT in build_query("what does a LUT do?")
+    # A long, already-specific query does not need it.
+    assert DOMAIN_HINT not in build_query(
+        "how does white balance affect skin tone in portrait photography"
+    )
+
+
+def test_relevance_gate_rejects_a_coincidental_title_match():
+    """One domain word is not enough: 'Lut Desert' matched on its title."""
+    from looklab.research import is_relevant
+
+    desert = {
+        "title": "Lut Desert",
+        "passage": "Lut Desert is a large salt desert in the provinces of "
+                   "Kerman and Sistan, and is among the hottest places on Earth.",
+    }
+    real = {
+        "title": "Color temperature",
+        "passage": "Color temperature describes the colour of a light source. "
+                   "It is measured in kelvin and is used in photography and "
+                   "video to describe the white balance of an image.",
+    }
+    assert not is_relevant(desert)
+    assert is_relevant(real)
+
+
+def test_retrieval_never_raises_when_offline(monkeypatch):
+    """A dead network must degrade to 'no sources', never to an exception."""
+    from looklab import research
+
+    research.reset_cache()
+    monkeypatch.setattr(research, "_get", lambda *a, **k: None)
+    assert research.retrieve("what is colour temperature") == []
+
+
+def test_citations_render_with_licence():
+    from looklab.research import format_citations
+
+    text = format_citations([
+        {"title": "Color temperature", "url": "https://en.wikipedia.org/wiki/Color_temperature"}
+    ])
+    assert "Color temperature" in text
+    assert "wikipedia.org" in text
+    assert "CC BY-SA" in text
+
+
+def test_the_offline_narrator_never_retrieves(monkeypatch):
+    """Retrieval is only useful with a model to ground; DemoChatModel has none."""
+    from looklab import research
+    from looklab.llm import DemoChatModel
+
+    called = []
+    monkeypatch.setattr(research, "retrieve", lambda *a, **k: called.append(1) or [])
+    assert DemoChatModel().answer_question("what is a LUT?", {}) is None
+    assert not called, "the offline path should not hit the network"

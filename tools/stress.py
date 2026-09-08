@@ -300,6 +300,73 @@ def test_memory_across_threads(url: str) -> None:
     )
 
 
+def test_trace(url: str) -> None:
+    """The transition view must survive a real server, not just a TestClient.
+
+    It is rebuilt from the checkpointer's own history, so it exercises a code
+    path nothing else does: reading back many checkpoints written by a
+    long-lived uvicorn process rather than by an in-process test harness.
+    """
+    print("\n=== state transitions, rebuilt from checkpoint history ===")
+    thread = f"stress-trace-{int(time.time())}"
+    asked = [
+        "how do i get the deep amber look?",
+        "hello there",
+        "what look is teal and orange?",
+        "whats wrong with my edit?",
+        "how do i get the teal and orange look?",
+    ]
+    for message in asked:
+        post(url, {"message": message, "thread_id": thread})
+
+    status, data = get(url, f"/trace/{thread}")
+    turns = data.get("turns", []) if isinstance(data, dict) else []
+    record("trace returns one row per turn", len(turns) == len(asked), f"{len(turns)} rows")
+    if len(turns) != len(asked):
+        return
+
+    record(
+        "each turn is labelled with its own message",
+        [t["message"] for t in turns] == asked,
+    )
+
+    paths = {tuple(t["nodes"]) for t in turns}
+    record(
+        "four intents produce four distinct paths",
+        len(paths) == 4,
+        f"{len(paths)} distinct paths across {len(turns)} turns",
+    )
+
+    by_intent = {t["intent"]: t["nodes"] for t in turns}
+    record(
+        "the chat branch runs no analysis node",
+        all(
+            n not in by_intent.get("chat", [])
+            for n in ("analyze_pair", "analyze_ref", "analyze_cur", "delta", "critique")
+        ),
+        " -> ".join(by_intent.get("chat", [])),
+    )
+    record(
+        "every turn reads and writes long-term memory",
+        all(t["nodes"][1] == "load_profile" and "save_profile" in t["nodes"] for t in turns),
+    )
+
+    achieves = [t for t in turns if t["intent"] == "achieve"]
+    record(
+        "recipe increments are per-turn, not the running total",
+        len(achieves) == 2
+        and achieves[1]["recipe_added"] < achieves[1]["recipe_total"]
+        and achieves[1]["recipe_added"] == achieves[1]["recipe_total"] - achieves[0]["recipe_total"],
+        " ".join(f"+{t['recipe_added']}/{t['recipe_total']}" for t in achieves),
+    )
+
+    status, unknown = get(url, "/trace/no-such-thread-at-all")
+    record(
+        "an unknown thread is empty, not an error",
+        status == 200 and unknown.get("exists") is False and unknown.get("turns") == [],
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--url", default=None, help="target a running server instead of starting one")
@@ -343,6 +410,7 @@ def main() -> int:
         test_fuzz(url)
         test_soak(url, args.soak)
         test_memory_across_threads(url)
+        test_trace(url)
     finally:
         if proc is not None:
             proc.terminate()

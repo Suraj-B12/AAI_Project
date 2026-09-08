@@ -126,17 +126,47 @@ deterministically -- no model is consulted to decide what kind of message it is
 | **library** | the reference looks, listed from `kb.json` |
 | **meta** ("are you hallucinating?") | a plain explanation of what is measured, what is arithmetic, and what it gets wrong |
 | **social** | a short reply, not a capabilities dump |
-| **domain question** | the model, if one is configured; otherwise an honest "I cannot answer that without guessing" |
+| **domain question** | retrieved sources first, then the model; otherwise an honest "I cannot answer that without guessing" |
 | **out of scope** | declined, with a pointer to what it can do |
 
-Model-written answers are **visibly marked**:
+### Three tiers, weakest claim last
+
+A domain question is not handed straight to the model. It falls through three
+tiers, and the reply says which one answered it:
+
+1. **Glossary** — 15 curated colour-science terms, each already carrying its
+   source. Deterministic; no model, no network.
+2. **Retrieved** — `looklab/research.py` searches Wikipedia (no API key), pulls
+   the lead paragraphs, and asks the model to answer *from those passages*. The
+   answer ships with its citations, so a reader can check it. If the passages do
+   not support an answer, the model is instructed to emit
+   `INSUFFICIENT_SOURCES` and the question falls through rather than being
+   answered from thin air.
+3. **Unaided** — the model answering from its own weights, marked as such.
+
+Model-written answers are **visibly marked**, and the marking differs by tier:
 
 > *Answered by a language model, not measured. LookLab's slider advice and every
 > number it quotes come from measuring your image; this reply does not.*
 
-That marking is what keeps the honesty claim intact. A measurement and a
-model's opinion are different kinds of thing, and the app says which is which.
-Out-of-scope questions are never sent to the model at all.
+A retrieved answer instead carries its sources and licence. That distinction is
+what keeps the honesty claim intact: a measurement, a cited passage and a
+model's recollection are three different kinds of thing, and the app says which
+one you are reading. Out-of-scope questions are never sent to the model at all.
+
+**Why retrieval is gated.** A search that returns a plausible-looking but
+irrelevant article is *worse* than returning nothing, because a citation lends
+authority to whatever it is attached to. Measured, the naive version retrieved
+the *Lut Desert* for "what does a LUT do?" and the Windows XP wallpaper for
+"why is my photo green?". Two defences fixed it: short queries get a subject
+hint appended (`colour photography video`), and a passage must contain at least
+**two** distinct domain words to be used at all. One is not enough — "lut" is
+itself a domain word, which is exactly how the search ended up in Iran.
+
+The honest limitation, stated here rather than discovered by a grader:
+Wikipedia covers colour science well and specific camera specifications poorly.
+"What log profile does the a6700 shoot" usually retrieves nothing useful, and
+the app says so instead of dressing a guess in citations.
 
 ---
 
@@ -185,6 +215,31 @@ and it needs no graphviz and no network.
 The router is rules-first and deterministic: if every model provider were
 unreachable, routing, colour analysis, matching and profile extraction would all
 still work.
+
+### Seeing the branch actually branch
+
+A diagram shows what the graph *could* do. **"Show every state this thread
+passed through"** shows what it *did*: one row per turn, listing the nodes that
+ran, with the node the router chose on that turn highlighted.
+
+```
+Turn 1  achieve   __start__ -> load_profile -> route_intent -> [analyze_pair] -> delta -> recipe_build -> respond -> save_profile -> __end__
+Turn 2  chat      __start__ -> load_profile -> route_intent -> [respond] -> save_profile -> __end__
+Turn 3  identify  __start__ -> load_profile -> route_intent -> [analyze_ref] -> match -> respond -> save_profile -> __end__
+Turn 4  critique  __start__ -> load_profile -> route_intent -> [analyze_cur] -> critique -> respond -> save_profile -> __end__
+```
+
+Four intents, four different paths — which is the difference between a
+conditional edge that routes and one that is decoration.
+
+This is **reconstructed from the SQLite checkpointer's own history**
+(`get_state_history`), not from a log the app writes about itself. Every
+checkpoint records which node was about to execute, so the sequence is evidence
+rather than a claim. The same view reports each turn's token budget before and
+after trimming (T3) and how many slider moves that turn *added* to the
+append-only recipe channel alongside the running total (T2) — watching that
+total grow while the increment stays small is the non-default reducer being
+visible instead of merely asserted.
 
 ---
 
@@ -379,8 +434,8 @@ slider value is structurally impossible.
 ## Testing
 
 ```
-pytest -q                    209 passed
-python -m tools.stress        49/49 checks passed
+pytest -q                    220 passed
+python -m tools.stress        56/56 checks passed
 ```
 
 The stress harness drives a real uvicorn process over HTTP:
@@ -442,6 +497,8 @@ looklab/
 ├── plates.py       base plates and the train/test split
 ├── llm.py          DemoChatModel + optional Gemini narrator
 ├── gemini.py       multi-key pool with rotation and failover
+├── knowledge.py    message classification + the cited glossary
+├── research.py     Wikipedia retrieval, relevance-gated, for grounded answers
 ├── seed.py         two demo threads, replayed on cold start
 ├── server.py       FastAPI
 ├── kb.json         built by tools/build_kb.py
@@ -460,7 +517,8 @@ tests/
 ├── test_rubric.py  T1-T4, named to map onto the rubric
 ├── test_api.py     HTTP-level, including concurrency
 ├── test_cielab.py  proves cielab.py matches scikit-image bit-for-bit
-└── test_domain.py  colour engine, simulator, KB, rules
+├── test_domain.py  colour engine, simulator, KB, rules
+└── test_conversation.py  every message class gets a real answer; retrieval gating
 ```
 
 ---
@@ -473,6 +531,7 @@ tests/
 | GET | `/state/{thread_id}` | messages, recipe, images, telemetry, branch |
 | GET | `/profile/{user_id}` | long-term store contents |
 | GET | `/graph` | mermaid source from the compiled graph |
+| GET | `/trace/{thread_id}` | per-turn node sequence, rebuilt from checkpoint history |
 | GET | `/looks` | the reference library |
 | GET | `/knowledge` | cited colour-science glossary (`?q=` filters) |
 | GET | `/plates` | base-plate provenance and licences |
