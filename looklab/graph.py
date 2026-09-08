@@ -49,6 +49,9 @@ from .llm import get_narrator
 from .memory import (
     describe_profile,
     extract_profile_facts,
+    forget,
+    forget_request,
+    preview_forget,
     last_human_text,
     load_profile,
     save_profile_facts,
@@ -175,6 +178,14 @@ def classify_intent(text: str, images: dict | None) -> Intent:
     images = images or {}
     has_ref = has_role(images, "reference")
     has_cur = has_role(images, "current")
+
+    # Asking to forget is checked before asking to recall: "delete my profile"
+    # contains "my profile", so the recall cues would answer it by listing the
+    # profile it is asking to erase.
+    from .memory import forget_request
+
+    if forget_request(text):
+        return "chat"
 
     # A question about what is stored is answered from the profile, not by
     # running any analysis. Checked first because "what do you remember about
@@ -513,6 +524,13 @@ def node_respond(state: LookState) -> dict:
     # while the profile pane visibly fills beside it.
     learned = extract_profile_facts(user_text)
     profile = {**(state.get("profile") or {}), **{k: v for k, v in learned.items() if k != "_note"}}
+
+    # A forget is applied by `save_profile`, which runs AFTER this node. Show
+    # the narrator what the profile will look like once it has, so the
+    # confirmation does not list the very thing it just said it deleted.
+    pending_forget = forget_request(user_text)
+    if pending_forget:
+        profile = preview_forget(profile, pending_forget[0], pending_forget[1])
     system = "You are LookLab, a colour-grading assistant."
     described = describe_profile(profile)
     if described:
@@ -539,6 +557,9 @@ def node_respond(state: LookState) -> dict:
         # the generic acknowledgement that re-states the profile as though the
         # user had just supplied it.
         "is_recall": any(cue in user_text.lower() for cue in RECALL_CUES),
+        # A forget is confirmed by naming what is left, so the user can see it
+        # actually happened rather than taking the app's word for it.
+        "forget_request": pending_forget,
         "signature": images.get("current") or images.get("reference") or {},
     }
     if intent == "identify":
@@ -570,10 +591,19 @@ def node_save_profile(state: LookState, *, store: BaseStore) -> dict:
     everybody builds the read and forgets the write.
     """
     text = last_human_text(state.get("messages") or [])
+    user_id = state.get("user_id") or "suraj"
+
+    # Removing takes priority over adding: "forget that I like warm tones"
+    # contains a preference the extractor would happily re-save on the very
+    # turn it was asked to drop it.
+    request = forget_request(text)
+    if request:
+        forget(store, user_id, request[0], request[1])
+        return {"profile": load_profile(store, user_id)}
+
     facts = extract_profile_facts(text)
     if not facts:
         return {}
-    user_id = state.get("user_id") or "suraj"
     save_profile_facts(store, user_id, facts)
 
     # Re-read rather than merging `facts` into the old profile. The two are not

@@ -72,6 +72,13 @@ _NAME_STOPWORDS = {
     "not", "just", "really", "trying", "going", "looking", "working", "using",
     "the", "a", "an", "sure", "here", "back", "done", "new", "sorry", "good",
     "fine", "ok", "okay", "still", "always", "never", "about", "into", "on",
+    # Feelings and states: "I'm confused" stored the name "Confused", and the
+    # app then greeted them as Confused in every later reply.
+    "confused", "lost", "stuck", "tired", "curious", "interested", "happy",
+    "sad", "annoyed", "frustrated", "unsure", "certain", "wondering",
+    "asking", "hoping", "guessing", "afraid", "worried", "keen", "ready",
+    "back", "here", "there", "close", "done", "finished", "learning",
+    "beginner", "new", "amateur", "pro", "professional", "student",
 }
 
 _MAX_VALUE_LEN = 60
@@ -82,6 +89,11 @@ _NOT_A_CAMERA = {
     "weddings", "portraits", "landscapes", "events", "film", "digital", "raw",
     "jpeg", "a lot", "everything", "mostly", "professionally", "people",
     "products", "sports", "street", "nature", "wildlife", "concerts",
+    # Formats and modes, not cameras: "I shoot log" stored camera="log", and
+    # every later reply then told the user they shoot on a "log".
+    "log", "slog", "s-log", "clog", "c-log", "vlog", "v-log", "hlg", "flat",
+    "raw", "jpeg", "jpg", "video", "stills", "handheld", "manual", "auto",
+    "wide", "tele", "macro", "prime", "zoom", "anamorphic",
 }
 
 # An explicit instruction to remember something. These are checked before the
@@ -124,22 +136,221 @@ def _clean(value: str) -> str:
     return value[:_MAX_VALUE_LEN]
 
 
-def explicit_save_request(text: str) -> str | None:
-    """The thing the user explicitly asked to be remembered, if any.
+# Words that can follow "remember" without being the thing to remember.
+# "I shoot on a Sony a6700, remember that too" puts the fact BEFORE the verb,
+# and naively capturing what follows stored the note "too".
+_FILLER_AFTER_TRIGGER = {
+    "that", "this", "it", "too", "also", "as well", "that too", "this too",
+    "them", "these", "those", "please", "ok", "okay", "yeah", "yes",
+    "that as well", "this as well", "for me", "for later", "next time",
+}
 
-    Returns the remembered content, or None when this is not a save request.
+# A trailing imperative with nothing after it: "..., remember." / "... remember?"
+_TRAILING_TRIGGER = re.compile(
+    r"[,;.\s]*(?:and\s+)?(?:please\s+)?"
+    r"(?:remember|note|save|store|keep)(?:\s+(?:that|this|it|too|also|as\s+well)){0,3}"
+    r"\s*[.!?]*\s*$",
+    re.IGNORECASE,
+)
+
+
+# A question is not a fact to store. "don't forget what a LUT does" is asking,
+# not telling, and storing it produced "Saved - I will remember what a LUT
+# does" followed by no answer at all.
+_LOOKS_LIKE_QUESTION = re.compile(
+    r"^\s*(?:what|why|how|when|where|which|who|whose|can|could|should"
+    r"|would|is|are|was|were|do|does|did|will|shall|may|might)\b",
+    re.IGNORECASE,
+)
+
+
+def _is_filler(note: str) -> bool:
+    return note.strip().lower().strip(" .,;:!?") in _FILLER_AFTER_TRIGGER
+
+
+def _is_question(note: str) -> bool:
+    note = note.strip()
+    return bool(note.endswith("?") or _LOOKS_LIKE_QUESTION.match(note))
+
+
+# Asking the app to forget. Memory a user cannot remove is not memory they
+# control, and the app previously had a write path and a read path but no way
+# back out -- "delete my profile" was even caught by the recall cues and
+# answered by listing the profile it was being asked to erase.
+FORGET_ALL_PATTERNS = (
+    r"\b(?:forget|delete|clear|wipe|erase|reset|remove)\s+(?:my\s+|the\s+|all\s+(?:my\s+)?)?"
+    r"(?:profile|memory|memories|data|everything|it all|all of it|what you know)",
+    r"\bforget\s+(?:me|everything|it all|all of it)\b",
+    r"\bstart\s+(?:over|fresh|again)\s+(?:with\s+)?(?:my\s+)?(?:profile|memory)\b",
+)
+
+# Forgetting one thing: "forget my camera", "forget that I like warm tones".
+FORGET_ONE_PATTERNS = (
+    r"\b(?:forget|delete|remove|drop|unset)\s+(?:that\s+|my\s+|the\s+)?(.+)",
+    r"\bi\s+(?:never|didn'?t)\s+(?:said|say|told you)\s+(.+)",
+    r"\bthat'?s\s+(?:not\s+right|wrong)\s*[,.]?\s*(?:i\s+)?(.+)",
+)
+
+# Which stored field a phrase refers to, so "forget my camera" clears `camera`.
+FIELD_ALIASES: dict[str, tuple[str, ...]] = {
+    "name": ("name", "my name", "who i am"),
+    "camera": ("camera", "my camera", "body", "gear"),
+    "editor": ("editor", "software", "app"),
+    "preferred_look": ("preference", "preferences", "favourite", "favorite",
+                       "preferred look", "what i like", "the look i like", "likes"),
+    "dislikes": ("dislike", "dislikes", "what i hate", "what i dislike"),
+    "notes": ("notes", "note"),
+}
+
+
+def forget_request(text: str) -> tuple[str, str | None] | None:
+    """Is this asking the app to forget something?
+
+    Returns ``("all", None)`` to clear the profile, ``("field", name)`` to
+    clear one field, ``("note", phrase)`` to drop a matching note, or None.
     """
     if not text:
         return None
+    for pattern in FORGET_ALL_PATTERNS:
+        if re.search(pattern, text, flags=re.IGNORECASE):
+            return ("all", None)
+
+    for pattern in FORGET_ONE_PATTERNS:
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if not match:
+            continue
+        target = _clean(match.group(1)).lower()
+        if not target:
+            continue
+        for field, aliases in FIELD_ALIASES.items():
+            if any(re.search(rf"(?<!\w){re.escape(a)}(?!\w)", target) for a in aliases):
+                return ("field", field)
+        return ("note", target)
+    return None
+
+
+def preview_forget(profile: dict, what: str, target: str | None) -> dict:
+    """The profile as it will look after ``forget``, without touching the store.
+
+    ``respond`` runs before ``save_profile`` in the graph, so at narration time
+    the deletion has not happened yet. Confirming "done" while listing the
+    thing that was just deleted is worse than not confirming at all, so the
+    narrator is handed this projection instead of the current state.
+    """
+    profile = dict(profile or {})
+    if what == "all":
+        return {}
+    if what == "field":
+        profile.pop(str(target), None)
+        return profile
+
+    notes = profile.get("notes")
+    if isinstance(notes, list) and notes and target:
+        keep = [n for n in notes if target not in str(n).lower()]
+        if len(keep) != len(notes):
+            if keep:
+                profile["notes"] = keep
+            else:
+                profile.pop("notes", None)
+            return profile
+    for key, value in list(profile.items()):
+        if key != "notes" and target and target in str(value).lower():
+            profile.pop(key, None)
+            break
+    return profile
+
+
+def forget(store: Any, user_id: str, what: str, target: str | None) -> list[str]:
+    """Remove stored facts. Returns what was actually removed."""
+    if store is None or not user_id:
+        return []
+    namespace = (PROFILE_NAMESPACE, str(user_id))
+    profile = load_profile(store, user_id)
+    removed: list[str] = []
+
+    def drop(key: str) -> None:
+        try:
+            store.delete(namespace, key)
+            removed.append(key)
+        except Exception:
+            pass
+
+    if what == "all":
+        for key in list(profile):
+            drop(key)
+        return removed
+
+    if what == "field":
+        if profile.get(target):
+            drop(str(target))
+        return removed
+
+    # A note: keep the ones that do not mention the phrase.
+    notes = profile.get("notes")
+    if isinstance(notes, list) and notes and target:
+        keep = [n for n in notes if target not in str(n).lower()]
+        if len(keep) != len(notes):
+            try:
+                if keep:
+                    store.put(namespace, "notes", {"value": keep})
+                else:
+                    store.delete(namespace, "notes")
+                removed.append("notes")
+            except Exception:
+                pass
+    # A phrase that names no field and matches no note: try the field whose
+    # stored VALUE contains it, so "forget that I like warm golden" works.
+    if not removed:
+        for key, value in profile.items():
+            if key != "notes" and target and target in str(value).lower():
+                drop(key)
+                break
+    return removed
+
+
+def explicit_save_request(text: str) -> str | None:
+    """The thing the user explicitly asked to be remembered, if any.
+
+    Handles both word orders, because people use them interchangeably:
+
+        "remember that I shoot on a Sony a6700"   -> the fact FOLLOWS the verb
+        "I shoot on a Sony a6700, remember that"  -> the fact PRECEDES it
+
+    The second form used to capture the word after the verb, so
+    "..., remember that too" stored the note "too" and dropped the camera
+    entirely. Returns None when this is not a save request, or when there is
+    genuinely nothing to save ("remember that" on its own).
+    """
+    if not text:
+        return None
+
+    def clean(value: str) -> str:
+        return re.sub(r"\s+", " ", value or "").strip(" .,;:!?-\"'")
+
     for pattern in EXPLICIT_SAVE_PATTERNS:
         match = re.search(pattern, text, flags=re.IGNORECASE)
         if not match:
             continue
-        note = re.sub(r"\s+", " ", match.group(1)).strip(" .,;:!?-\"'")
-        # "remember?" or "remember me" alone is not a fact to store.
-        if len(note) < 3:
-            continue
-        return note[:_MAX_NOTE_LEN]
+        note = clean(match.group(1))
+        if _is_question(note):
+            # "remember what a LUT is" is a request for an answer, not a fact.
+            return None
+        if len(note) >= 3 and not _is_filler(note):
+            return note[:_MAX_NOTE_LEN]
+        # What followed the verb was filler, so the fact is what came before it.
+        before = clean(_TRAILING_TRIGGER.sub("", text[: match.start()]))
+        if len(before) >= 3:
+            return before[:_MAX_NOTE_LEN]
+        # "remember that" with nothing on either side -- nothing to store.
+        return None
+
+    # A trailing imperative the patterns above cannot match, because they all
+    # require something after the verb: "I shoot on a Sony a6700, remember."
+    trailing = _TRAILING_TRIGGER.search(text)
+    if trailing and trailing.start() > 0:
+        before = clean(text[: trailing.start()])
+        if len(before) >= 3:
+            return before[:_MAX_NOTE_LEN]
     return None
 
 
@@ -160,11 +371,40 @@ def extract_profile_facts(text: str) -> dict[str, str]:
         # "remember that I like warm tones" sets preferred_look rather than
         # matching something earlier in the sentence.
         found.update(_scan_fields(explicit))
-        found["_note"] = explicit
+        if not _note_is_redundant(explicit, found):
+            found["_note"] = explicit
         return found
 
     found.update(_scan_fields(text))
     return found
+
+
+# Words a note can contain without adding anything the structured fields do
+# not already record. "im john" alongside name="John" is not a second fact.
+_NOTE_FILLER = {
+    "i", "im", "i'm", "am", "is", "are", "my", "me", "a", "an", "the", "on",
+    "in", "with", "using", "use", "uses", "shoot", "shooting", "shoots",
+    "edit", "editing", "edits", "like", "likes", "love", "prefer", "prefers",
+    "hate", "hates", "dislike", "dislikes", "avoid", "name", "called", "and",
+    "that", "this", "it", "to", "of", "for", "look", "looks", "tone", "tones",
+    "grade", "grades", "style", "styles", "camera",
+}
+
+
+def _note_is_redundant(note: str, fields: dict[str, str]) -> bool:
+    """Would storing this note just repeat the structured fields?
+
+    "remember me, im john" already becomes name="John"; keeping "im john" as a
+    separate note as well makes the recall listing read like the app is
+    confused about what it knows.
+    """
+    if not fields:
+        return False
+    known = " ".join(str(v) for k, v in fields.items() if k != "_note").lower()
+    words = [w for w in re.findall(r"[\w'-]+", note.lower()) if w not in _NOTE_FILLER]
+    if not words:
+        return True
+    return all(word in known for word in words)
 
 
 def _scan_fields(text: str) -> dict[str, str]:

@@ -16,6 +16,7 @@ and nothing downstream changes.
 from __future__ import annotations
 
 import os
+import re
 import threading
 from typing import Any
 
@@ -124,6 +125,13 @@ class DemoChatModel:
     def _say_identify(self, facts: dict) -> str:
         matches = facts.get("matches") or []
         if not matches:
+            answered = self._general_fallback(
+                facts,
+                "If you want a look measured rather than explained, upload a photo "
+                "and ask what look it is.",
+            )
+            if answered:
+                return answered
             return (
                 "I could not measure anything yet. Upload a photo, or just name a "
                 "look you want to know about \u2014 try \"what is teal and orange?\""
@@ -215,6 +223,13 @@ class DemoChatModel:
                 f"that any further change would be guesswork rather than improvement."
             )
         if not steps:
+            answered = self._general_fallback(
+                facts,
+                "If you want sliders rather than an explanation, name a look \u2014 for "
+                "example *how do I get the warm golden look?*",
+            )
+            if answered:
+                return answered
             return (
                 "I need something to aim at. Either upload the photo you want to "
                 "match, or name a look \u2014 for example \"how do I get the warm "
@@ -253,6 +268,13 @@ class DemoChatModel:
         lines = []
 
         if not sig:
+            answered = self._general_fallback(
+                facts,
+                "If you want this checked on an actual photo, upload it and I will "
+                "measure it.",
+            )
+            if answered:
+                return answered
             return (
                 "Upload the edit you want me to look at and I will check it for "
                 "blown highlights, crushed shadows, colour casts and over-saturation "
@@ -292,6 +314,44 @@ class DemoChatModel:
         "preferred_look": "You like",
         "dislikes": "You would rather avoid",
     }
+
+    def _say_forget(self, request, profile: dict) -> str:
+        """Confirm a deletion by showing what is left.
+
+        ``profile`` here is the state AFTER the removal, because save_profile
+        re-reads the store. Listing the remainder is the confirmation worth
+        giving: "done" is a claim, the remaining list is evidence.
+        """
+        what, target = request
+        if what == "all":
+            return (
+                "Cleared. I have deleted everything I had saved about you \u2014 name, "
+                "camera, preferences and any notes.\n\nNothing is kept. Tell me "
+                "something new whenever you like and I will start again."
+            )
+
+        label = {
+            "camera": "your camera",
+            "name": "your name",
+            "editor": "which editor you use",
+            "preferred_look": "what you said you like",
+            "dislikes": "what you said you dislike",
+            "notes": "that note",
+        }.get(str(target), f"\u201c{target}\u201d")
+
+        if not profile:
+            return (
+                f"Done \u2014 I have forgotten {label}, and there is nothing else left "
+                f"in your profile either."
+            )
+
+        listing = "\n".join(
+            line for line in self._say_recall(profile).splitlines()
+            if line.lstrip().startswith("-")
+        )
+        if not listing:
+            return f"Done \u2014 I have forgotten {label}. Nothing else is saved."
+        return f"Done \u2014 I have forgotten {label}.\n\nStill saved:\n\n{listing}"
 
     def _say_recall(self, profile: dict) -> str:
         """List exactly what is in long-term memory. No inference, no padding.
@@ -334,77 +394,299 @@ class DemoChatModel:
         return "\n".join(lines)
 
     def _say_chat(self, facts: dict) -> str:
-        profile = facts.get("profile") or {}
-        text = (facts.get("user_text") or "").lower()
-        saved = facts.get("saved_facts") or {}
+        """The chat branch: everything that is not identify, achieve or critique.
 
+        This used to have three outcomes and a catch-all, and the catch-all
+        swallowed everything: measured, fourteen out of fourteen ordinary
+        questions came back with the same sentence. A user who told the app
+        their camera and then asked four reasonable questions got the same
+        canned recital of their own profile four times.
+
+        The message is now classified first (see ``knowledge.classify_message``)
+        and each class gets a real answer. Nothing here needs a model; the
+        model, when configured, only widens what can be answered.
+        """
+        from .knowledge import classify_message, look_labels, lookup, render_entry
+
+        profile = facts.get("profile") or {}
+        text = (facts.get("user_text") or "").strip()
+        saved = facts.get("saved_facts") or {}
         greeting = f"Hi {profile['name']}. " if profile.get("name") else ""
+
+        if facts.get("forget_request"):
+            return self._say_forget(facts["forget_request"], profile)
 
         if facts.get("is_recall"):
             return self._say_recall(profile)
 
-        if saved:
-            # An explicit "remember that ..." deserves a confirmation. A fact
-            # picked up in passing deserves an acknowledgement -- announcing
-            # "Saved." at somebody who was just introducing themselves reads
-            # like a form submission, not a conversation.
+        # A message can both tell us something and ask something: "I use
+        # Lightroom, what can you do?". Acknowledging the fact and stopping
+        # answers only half of it, so the acknowledgement becomes a one-line
+        # prefix and the question is answered underneath.
+        asks_too = bool(re.search(r"\?|^\s*(what|how|why|which|can|does|is|are)\b",
+                                  text, flags=re.IGNORECASE))
+
+        # Acknowledge ONLY on a turn that actually learned something. This
+        # branch used to fire whenever a profile existed, which is why every
+        # later question was answered by reciting the profile back.
+        if saved and not asks_too:
             explicit = "remembered" in saved
             fields = {k: v for k, v in saved.items() if k != "remembered"}
-            pretty = ", ".join(
-                f"{k.replace('_', ' ')} is {v}" for k, v in fields.items()
-            )
+            pretty = ", ".join(f"{k.replace('_', ' ')} is {v}" for k, v in fields.items())
             if explicit:
-                lead = f"{greeting}Saved \u2014 I will remember that {saved['remembered']}."
+                lead = f"{greeting}Saved — I will remember that {saved['remembered']}."
                 if pretty:
                     lead += f" (Filed under {pretty}.)"
             else:
-                lead = f"{greeting}Noted \u2014 {pretty}." if pretty else f"{greeting}Noted."
+                lead = f"{greeting}Noted — {pretty}." if pretty else f"{greeting}Noted."
             return (
                 f"{lead}\n\nThis is kept with your profile, so it applies in every "
                 f"conversation, not just this one. Ask *\"what do you know about me?\"* "
                 f"to see everything saved."
             )
 
-        if any(k in text for k in ("what can you do", "help", "how does this work",
-                                   "what is this", "how do i use")):
-            return greeting + (
-                "I measure the actual colour in a photo and turn it into Lightroom "
-                "slider moves. Three things I can do:\n\n"
-                "**1. Identify** \u2014 \"what look is this?\" Upload a photo and I will "
-                "tell you which style it is closest to and what makes it that.\n\n"
-                "**2. Recreate** \u2014 \"how do I get the teal and orange look?\" I give you "
-                "ordered slider steps: Basic panel, Colour Grading wheels, and the "
-                "Colour Mixer (HSL) per colour. Upload your result and I will refine it.\n\n"
-                "**3. Critique** \u2014 \"what is wrong with my edit?\" I check clipping, "
-                "contrast, colour casts and saturation.\n\n"
-                "You can also tell me things to remember \u2014 your camera, the looks you "
-                "like \u2014 and I will use them in future conversations.\n\n"
-                "No AI image model is involved. Every number comes from measuring pixels."
+        lowered = text.lower()
+
+        # A short prefix noting what was learned, prepended to whatever answer
+        # follows, so a message that both states a fact and asks a question
+        # gets both.
+        noted = ""
+        if saved and asks_too:
+            fields = {k: v for k, v in saved.items() if k != "remembered"}
+            if fields:
+                noted = (
+                    "*(Noted — "
+                    + ", ".join(f"{k.replace('_', ' ')} is {v}" for k, v in fields.items())
+                    + ", saved to your profile.)*\n\n"
+                )
+            elif saved.get("remembered"):
+                noted = f"*(Saved — {saved['remembered']}.)*\n\n"
+
+        # Phrase matching, not bare substrings. "help" alone fired this on
+        # "help me understand log", which is a question about log, not a
+        # request for the capabilities list.
+        if re.search(
+            r"\b(what can you do|what do you do|how does this work|how do i use (this|you)"
+            r"|what (is|are) (this|you)|what are you for|can you help me\??$"
+            r"|help me get started|^help$)\b",
+            lowered,
+        ):
+            return noted + greeting + self._capabilities()
+
+        kind = classify_message(text)
+
+        if kind == "social":
+            return noted + self._say_social(lowered, greeting, profile)
+
+        if kind == "meta":
+            return noted + self._say_meta()
+
+        if kind == "library":
+            labels = look_labels()
+            listed = "\n".join(f"- {name}" for name in labels)
+            return (
+                f"I have **{len(labels)} reference looks** measured and stored:\n\n"
+                f"{listed}\n\nAsk *\"how do I get the {labels[0].lower()} look?\"* for the "
+                f"slider steps, or upload a photo and I will tell you which one it is "
+                f"closest to."
             )
 
-        known = []
-        if profile.get("camera"):
-            known.append(f"you shoot on a {profile['camera']}")
-        if profile.get("preferred_look"):
-            known.append(f"you like {profile['preferred_look']}")
-        if profile.get("dislikes"):
-            known.append(f"you avoid {profile['dislikes']}")
-        if profile.get("editor"):
-            known.append(f"you edit in {profile['editor']}")
-
-        if known:
+        if kind == "glossary":
+            entries = lookup(text)
+            body = "\n\n".join(render_entry(e) for e in entries)
             return (
-                greeting
-                + "Got it \u2014 "
-                + ", and ".join(known)
-                + ". I will keep that in mind.\n\nAsk me to identify a look, recreate "
-                "one, or check an edit."
+                f"{body}\n\nIf you want this applied to an actual photo rather than "
+                f"explained, upload one and ask what look it is, or ask how to get a "
+                f"look you have in mind."
+            )
+
+        # Anything left is a question this app cannot answer from its own
+        # measurements. A model may be able to; the deterministic build says so
+        # honestly instead of pretending.
+        if kind in ("domain_question", "domain_statement"):
+            answerer = self._answerer(facts) or self.answer_question
+            answer = answerer(text, profile)
+            if answer:
+                return answer
+            return self._cannot_answer(text, in_domain=True, has_model=bool(self._answerer(facts)))
+
+        if kind == "out_of_scope":
+            # Deliberately never offered to the model: a colour tool answering
+            # "tell me a joke" is scope creep, and a wrong answer there costs
+            # more credibility than the reply is worth.
+            return self._cannot_answer(text, in_domain=False, has_model=bool(self._answerer(facts)))
+
+        return greeting + (
+            "I am not sure what you are after. I can identify a look in a photo, "
+            "give you the sliders to recreate one, or check an edit for problems. "
+            "Try *how do I get the warm golden look?* or upload a photo and ask "
+            "*what look is this?*"
+        )
+
+    # -- the pieces ---------------------------------------------------------
+
+    def _general_fallback(self, facts: dict, offer: str) -> str | None:
+        """Handle a message that reached an analysis branch with nothing to analyse.
+
+        The routing cues are substrings, so an ordinary question can be caught
+        by one: "is anything **wrong** with log footage" hits a critique cue and
+        used to be answered with "upload the edit you want me to look at". If
+        there is nothing to analyse and the message reads as a general
+        question, answer the question instead. Returns None to let the branch
+        print its normal "give me something to look at" message.
+        """
+        from .knowledge import classify_message, lookup, render_entry
+
+        text = (facts.get("user_text") or "").strip()
+        if not text:
+            return None
+
+        kind = classify_message(text)
+        if kind not in ("glossary", "domain_question", "meta", "library"):
+            return None
+        # "what is wrong with MY edit" really is a request to look at an image.
+        if re.search(r"\b(my|this|these|the)\s+(edit|photo|image|picture|shot|file)\b",
+                     text, flags=re.IGNORECASE):
+            return None
+
+        if kind == "meta":
+            return self._say_meta()
+        if kind == "library":
+            return None  # the library reply is only wired into the chat branch
+        if kind == "glossary":
+            entries = lookup(text)
+            body = "\n\n".join(render_entry(e) for e in entries)
+            return f"{body}\n\n{offer}"
+
+        answerer = self._answerer(facts)
+        if answerer:
+            answer = answerer(text, facts.get("profile") or {})
+            if answer:
+                return answer
+        # A real question that reached this branch only because a routing cue
+        # is a substring. Saying "upload the edit you want me to look at" to
+        # "is anything wrong with log footage" answers a question nobody asked;
+        # saying plainly that it cannot answer is both truer and more useful.
+        return self._cannot_answer(text, in_domain=True, has_model=bool(answerer))
+
+    def answer_question(self, text: str, profile: dict) -> str | None:
+        """A general answer, when a model is available. None on the offline path.
+
+        ``DemoChatModel`` never answers general questions -- it has nothing to
+        answer them with, and inventing one would break the only claim this
+        project actually makes.
+
+        A wrapping narrator supplies its own answerer through ``facts`` rather
+        than by subclassing, because ``GeminiNarrator`` DELEGATES to a
+        ``DemoChatModel`` instance instead of inheriting from it: overriding
+        this method on the wrapper had no effect at all, since the code that
+        calls it runs on the delegate.
+        """
+        return None
+
+    @staticmethod
+    def _answerer(facts: dict):
+        """The active narrator's general-question answerer, if it has one."""
+        return facts.get("_answerer")
+
+    def _cannot_answer(self, text: str, in_domain: bool, has_model: bool = False) -> str:
+        """Say so plainly, and point at what the app can actually do.
+
+        The wording depends on WHY it cannot answer. Claiming "I have no
+        language model configured" while one is running and simply declined the
+        question is a lie about the app's own state.
+        """
+        from .knowledge import lookup, render_entry
+
+        if in_domain and has_model:
+            head = (
+                "I could not get an answer to that just now. It is a photography "
+                "question rather than something I can measure, and I would rather "
+                "say so than guess."
+            )
+        elif in_domain:
+            head = (
+                "That is a photography question rather than something I can measure, "
+                "and I answer from measurements. I do not have a language model "
+                "configured, so I would only be guessing."
+            )
+        else:
+            head = (
+                "That is outside what I do — I am a colour-grading tool, so I would "
+                "only be making something up."
+            )
+
+        related = lookup(text, limit=1)
+        extra = ""
+        if related:
+            extra = f"\n\nRelated to what you asked, though:\n\n{render_entry(related[0])}"
+
+        return (
+            f"{head}{extra}\n\nWhat I can do: identify the look in a photo, give you "
+            f"the Lightroom sliders to recreate one, or check an edit for clipping, "
+            f"casts and contrast problems."
+        )
+
+    def _say_social(self, lowered: str, greeting: str, profile: dict) -> str:
+        if lowered.startswith(("thanks", "thank you", "ta", "cheers", "nice",
+                               "great", "cool", "awesome", "perfect", "lovely")):
+            return "Any time. Ask me whenever you want a look measured or recreated."
+        if lowered.startswith(("bye", "goodbye", "see you", "later", "cya")):
+            return (
+                "See you. Anything you told me to remember is saved against your "
+                "profile, so it will still be here next time."
+            )
+        if lowered.startswith(("ok", "okay", "sure", "right", "got it", "alright", "fine")):
+            return "Right. What would you like to do next?"
+        opener = greeting or "Hello. "
+        if profile.get("preferred_look"):
+            return (
+                f"{opener}Want to pick up where you left off? You told me you like "
+                f"{profile['preferred_look']} — ask *what should I try?* and I will "
+                f"suggest something, or upload a photo and I will measure it."
             )
         return (
-            greeting
-            + "I am a colour-grading assistant. Ask me what a look is, how to get "
-            "one, or what is wrong with an edit \u2014 you do not need to upload "
-            "anything to start. Try: *how do I get the warm golden look?*"
+            f"{opener}Ask me what a look is, how to get one, or what is wrong with "
+            f"an edit. You do not need to upload anything to start — try "
+            f"*how do I get the warm golden look?*"
+        )
+
+    def _say_meta(self) -> str:
+        """Answer questions about the assistant itself, honestly and specifically."""
+        return (
+            "Fair question, so here is exactly how I work.\n\n"
+            "**The numbers are measured, not generated.** When you upload a photo I "
+            "convert it to CIELAB and compute real statistics — hue and chroma per "
+            "tonal zone, contrast, clipping, per-colour HSL. The same photo always "
+            "gives the same numbers. Nothing about that involves an AI image model.\n\n"
+            "**The slider advice is arithmetic** on those numbers, through a rule "
+            "table that was frozen before it was ever evaluated. It was tested "
+            "against 135 graded frames the reference library had never seen: 87% of "
+            "the time it moves a slider in the correct direction.\n\n"
+            "**What I can get wrong:** the mapping from a measurement back to slider "
+            "values is approximate, so the advice is a first guess that you refine by "
+            "re-uploading. A colourful subject can also look like a colour grade to "
+            "me — a red car makes the reds read strong whatever you did in editing.\n\n"
+            "**Where a language model comes in:** only to reword my answers, or to "
+            "answer general photography questions, and those are labelled when it "
+            "happens. It never invents a number."
+        )
+
+    def _capabilities(self) -> str:
+        return (
+            "I measure the actual colour in a photo and turn it into Lightroom "
+            "slider moves. Three things I can do:\n\n"
+            "**1. Identify** — \"what look is this?\" Upload a photo and I will tell "
+            "you which style it is closest to and what makes it that.\n\n"
+            "**2. Recreate** — \"how do I get the teal and orange look?\" I give you "
+            "ordered slider steps: Basic panel, Colour Grading wheels, and the "
+            "Colour Mixer (HSL) per colour. Upload your result and I will refine it.\n\n"
+            "**3. Critique** — \"what is wrong with my edit?\" I check clipping, "
+            "contrast, colour casts and saturation.\n\n"
+            "I also keep what you tell me — your camera, the looks you like — and use "
+            "it in future conversations. Say *remember that ...* and ask *what do you "
+            "know about me?* to see it.\n\n"
+            "No AI image model is involved. Every number comes from measuring pixels."
         )
 
 
@@ -458,6 +740,7 @@ class GeminiNarrator:
         self.rewrites = 0
         self.fallbacks = 0
         self.verbatim = 0
+        self.answers = 0
 
     # Replies whose payload is a FACT ABOUT THE USER rather than a computed
     # number are returned verbatim. The model is good at warming up advice and
@@ -477,10 +760,87 @@ class GeminiNarrator:
         matches = facts.get("matches") or []
         return bool(matches and matches[0].get("from_profile"))
 
+    ANSWER_SYSTEM = (
+        "You are the assistant inside LookLab, a colour-grading tool for "
+        "photographers. Answer the user's question directly and briefly.\n"
+        "RULES:\n"
+        "1. Two short paragraphs at most. No preamble, no sign-off.\n"
+        "2. If it is a photography, colour or camera question, answer it "
+        "properly and concretely.\n"
+        "3. If you are not certain of a specific fact -- a camera's exact "
+        "capabilities, a model number, a spec -- say you are not certain "
+        "rather than guessing. A wrong camera spec stated confidently is much "
+        "worse than an admission.\n"
+        "4. Never invent anything about LookLab itself. It does exactly three "
+        "things: it measures the colour of an uploaded photo, it tells you "
+        "which Lightroom sliders to move to match a look, and it critiques an "
+        "edit. It does NOT apply LUTs, transform footage, edit or export "
+        "images, or handle video. Do not tell the user LookLab can do "
+        "something it cannot -- if in doubt, do not mention LookLab at all. "
+        "You also cannot see what it measured or what it has stored.\n"
+        "5. If the question has nothing to do with photography or colour, say "
+        "briefly that it is outside what this tool is for.\n"
+        "Plain markdown. No headings."
+    )
+
+    # Appended to every model-written answer. The project's claim is that its
+    # numbers are measured; a general answer is not a measurement, so it says
+    # so. Marking it also means a wrong answer is attributable rather than
+    # looking like something the app computed.
+    ANSWER_FOOTER = (
+        "\n\n---\n*Answered by a language model, not measured. LookLab's slider "
+        "advice and every number it quotes come from measuring your image; this "
+        "reply does not.*"
+    )
+
+    def answer_question(self, text: str, profile: dict) -> str | None:
+        """Answer a general question with the model, clearly marked as such.
+
+        Returns None on any failure so the caller falls back to saying plainly
+        that it cannot answer -- which is the correct offline behaviour and a
+        better outcome than a guess.
+        """
+        context = ""
+        camera = (profile or {}).get("camera")
+        if camera:
+            context = (
+                f"\n\n(For context, the user has told LookLab they shoot on a "
+                f"{camera}. Use this only if it is relevant to the question, and "
+                f"do not restate their preferences back to them.)"
+            )
+        try:
+            answer = self._pool.generate(
+                text + context,
+                system=self.ANSWER_SYSTEM,
+                max_output_tokens=900,
+                temperature=0.4,
+                deadline=self._deadline,
+            )
+        except Exception:
+            self.fallbacks += 1
+            return None
+        answer = (answer or "").strip()
+        if not answer:
+            self.fallbacks += 1
+            return None
+        self.answers += 1
+        return answer + self.ANSWER_FOOTER
+
     def narrate(self, intent: str, facts: dict) -> str:
+        # Hand the delegate a way to answer general questions. GeminiNarrator
+        # wraps a DemoChatModel rather than subclassing it, so overriding
+        # answer_question here would never be reached by the code that calls
+        # it -- that code runs on the delegate.
+        facts = {**facts, "_answerer": self.answer_question}
+
         draft = self._demo.narrate(intent, facts)
         if self._is_factual_about_user(intent, facts):
             self.verbatim += 1
+            return draft
+        # A general answer is already final -- it came from the model with its
+        # own instructions and carries the "answered by a model" marker. Sending
+        # it through the rewrite prompt would strip that marker.
+        if draft.endswith(self.ANSWER_FOOTER):
             return draft
         try:
             text = self._pool.generate(
@@ -519,6 +879,7 @@ class ProviderChatModel:
         self.rewrites = 0
         self.fallbacks = 0
         self.verbatim = 0
+        self.answers = 0
 
     # Replies whose payload is a FACT ABOUT THE USER rather than a computed
     # number are returned verbatim. The model is good at warming up advice and

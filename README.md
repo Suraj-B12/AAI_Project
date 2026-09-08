@@ -27,7 +27,7 @@ required — the knowledge base is committed and the narrator is deterministic.
 
 ```bash
 pip install -r requirements-dev.txt
-pytest -q                       # 142 tests
+pytest -q                       # 209 tests
 python -m tools.stress          # 49 load / fuzz / soak checks against a live server
 python -m tools.calibrate       # the evaluation table below
 ```
@@ -114,6 +114,32 @@ because of a few dozen pixels.
 
 ---
 
+## Answering questions
+
+The chat branch is not a dead end. A free-form message is classified
+deterministically -- no model is consulted to decide what kind of message it is
+-- and each class gets a real answer:
+
+| Class | Answered with |
+|---|---|
+| **glossary** | a cited definition from the 15-term colour-science glossary, with its Wikipedia source and CC BY-SA licence |
+| **library** | the reference looks, listed from `kb.json` |
+| **meta** ("are you hallucinating?") | a plain explanation of what is measured, what is arithmetic, and what it gets wrong |
+| **social** | a short reply, not a capabilities dump |
+| **domain question** | the model, if one is configured; otherwise an honest "I cannot answer that without guessing" |
+| **out of scope** | declined, with a pointer to what it can do |
+
+Model-written answers are **visibly marked**:
+
+> *Answered by a language model, not measured. LookLab's slider advice and every
+> number it quotes come from measuring your image; this reply does not.*
+
+That marking is what keeps the honesty claim intact. A measurement and a
+model's opinion are different kinds of thing, and the app says which is which.
+Out-of-scope questions are never sent to the model at all.
+
+---
+
 ## Memory you control
 
 Say **"remember that ..."**, "note that ...", "don't forget ..." or "save this
@@ -121,6 +147,11 @@ to memory" and the fact is written to the long-term store, which is keyed by
 user rather than by conversation. It then applies in every future thread. Free
 notes are capped at ten and the oldest fall off, because memory that grows
 without limit is a storage leak.
+
+You can also ask it to **forget**: "forget my camera", "delete my profile",
+"forget that I print on matte". A deletion is confirmed by listing what is
+left, because "done" is a claim and the remaining list is evidence. Memory a
+user cannot remove is not memory they control.
 
 Conversations can be **deleted permanently**, including their uploaded images.
 Deleting rows is not enough: SQLite in WAL mode keeps the pages in the sidecar
@@ -348,7 +379,7 @@ slider value is structurally impossible.
 ## Testing
 
 ```
-pytest -q                    142 passed
+pytest -q                    209 passed
 python -m tools.stress        49/49 checks passed
 ```
 
