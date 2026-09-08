@@ -159,7 +159,7 @@ Measured over 14 free-form questions against the live model: **10 grounded,
 The first version of this feature scored **0 grounded out of 7** - it looked
 finished and did nothing, which is why the counters below exist.
 
-### Four things had to be fixed before any of it worked
+### Six things had to be fixed before any of it worked
 
 Each was found by reading the output, not by trusting that the feature was on.
 
@@ -200,6 +200,19 @@ bounding clause the prompt asks for.
 `GET /models` reports `answering.grounded` / `.ungrounded` / `.verbatim`, so
 which tier is doing the work is checkable from outside rather than asserted
 here.
+
+**"Out of scope" meant "no keyword matched".** Those are not the same thing.
+The word list missed *chromatic aberration*, *moire* and *dithering* -- all
+squarely this subject -- and declined them, while an identical question about
+saturation was answered. Two fixes. The list now shares the retrieval module's
+vocabulary, since both existed to answer "is this sentence about colour and
+imaging?" and had drifted apart. And when the list still misses, the question
+goes to retrieval before being declined: if sources pass the relevance gate,
+the question was in scope and the list was simply short; if none do, the
+decline stands. *Tell me a joke* retrieves nothing that passes, so scope creep
+is still refused -- by evidence rather than by spelling. The unaided tier is
+deliberately not offered here: a question the app could not even recognise is
+the worst place to answer from memory alone.
 
 **Comparisons never reach the glossary.** "rec709" is an alias of the sRGB
 entry, so "what is the difference between log and rec709?" was answered with a
@@ -481,7 +494,7 @@ slider value is structurally impossible.
 ## Testing
 
 ```
-pytest -q                    237 passed
+pytest -q                    244 passed
 python -m tools.stress        56/56 checks passed
 ```
 

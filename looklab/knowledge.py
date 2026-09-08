@@ -165,6 +165,21 @@ def is_comparison(text: str) -> bool:
     return bool(_COMPARISON.search(text or ""))
 
 
+def _domain_words() -> tuple[str, ...]:
+    """The keyword list, widened by the retrieval module's own vocabulary.
+
+    These two lists answer the same question -- "is this sentence about colour
+    and imaging?" -- and had drifted apart. research.DOMAIN_VOCAB knew
+    "chroma", "gamma", "luminance", "pixel" and "video"; this module did not,
+    so "what is chromatic aberration" was declined as out of scope while the
+    same question about saturation was answered. Matching here is substring
+    based, so "chroma" also covers "chromatic".
+    """
+    from .research import DOMAIN_VOCAB
+
+    return tuple(sorted(set(DOMAIN_WORDS) | set(DOMAIN_VOCAB)))
+
+
 def classify_message(text: str) -> str:
     """What kind of free-form message is this?
 
@@ -190,7 +205,7 @@ def classify_message(text: str) -> str:
 
     if lookup(text) and not is_comparison(text):
         return "glossary"
-    if is_comparison(text) or any(word in lowered for word in DOMAIN_WORDS):
+    if is_comparison(text) or any(word in lowered for word in _domain_words()):
         # A comparison that reached here mentioned a known term, so it is in
         # scope even when it phrases the question without a question word
         # ("log vs rec709").

@@ -498,3 +498,96 @@ def test_disclaimer_first_answers_are_detected(answer, opens_with_disclaimer):
     from looklab.llm import _opens_with_a_disclaimer
 
     assert _opens_with_a_disclaimer(answer) is opens_with_disclaimer
+
+
+# --------------------------------------------------------------------------
+# "Out of scope" meant "no keyword matched", which is not the same thing
+# --------------------------------------------------------------------------
+
+@pytest.mark.parametrize(
+    "text",
+    ["what is chromatic aberration", "how does a bayer sensor work", "what is a colour wheel"],
+)
+def test_terms_the_keyword_list_missed_are_in_scope(text):
+    """Two vocabularies for one question had drifted apart.
+
+    research.DOMAIN_VOCAB knew chroma, gamma, luminance, pixel and video;
+    knowledge.py did not, so "what is chromatic aberration" was declined while
+    the same question about saturation was answered. They now share one list.
+    """
+    from looklab.knowledge import classify_message
+
+    assert classify_message(text) == "domain_question"
+
+
+def test_the_two_vocabularies_are_actually_shared():
+    from looklab.knowledge import _domain_words
+    from looklab.research import DOMAIN_VOCAB
+
+    assert set(DOMAIN_VOCAB) <= set(_domain_words())
+
+
+def test_an_unrecognised_question_is_offered_to_retrieval_before_declining(app):
+    """A keyword list can never be complete, so the last word goes to evidence.
+
+    The relevance gate is a measured definition of this subject rather than an
+    enumeration of one, so a question it can find sources for was in scope and
+    the word list was simply short.
+    """
+    from looklab import llm
+
+    asked = []
+
+    def only_from_sources(text, profile):
+        asked.append(text)
+        return "Moire is an aliasing artifact [1].\n\n**Sources:** [1] ..."
+
+    real_say_chat = llm.DemoChatModel._say_chat
+
+    def say_chat(self, facts):
+        return real_say_chat(self, {**facts, "_scope_answerer": only_from_sources})
+
+    llm.DemoChatModel._say_chat = say_chat
+    try:
+        reply, _ = say(app, "what causes moire")
+    finally:
+        llm.DemoChatModel._say_chat = real_say_chat
+
+    assert asked == ["what causes moire"], "retrieval was never consulted"
+    assert "aliasing artifact" in reply
+    assert "outside what I do" not in reply
+
+
+def test_the_decline_stands_when_retrieval_finds_nothing(app):
+    """Scope creep is still refused -- by evidence rather than by spelling."""
+    from looklab import llm
+
+    asked = []
+    real_say_chat = llm.DemoChatModel._say_chat
+
+    def say_chat(self, facts):
+        return real_say_chat(
+            self,
+            {**facts, "_scope_answerer": lambda t, p: asked.append(t) or None},
+        )
+
+    llm.DemoChatModel._say_chat = say_chat
+    try:
+        reply, _ = say(app, "tell me a joke")
+    finally:
+        llm.DemoChatModel._say_chat = real_say_chat
+
+    assert asked == ["tell me a joke"]
+    assert "outside what I do" in reply
+    assert "identify the look" in reply
+
+
+def test_the_offline_narrator_declines_without_touching_the_network(app, monkeypatch):
+    """No model means no use for sources, so it must not pay for them."""
+    from looklab import research
+
+    monkeypatch.setattr(
+        research, "retrieve", lambda *a, **k: pytest.fail("offline path hit the network")
+    )
+    reply, _ = say(app, "tell me a joke")
+    assert "outside what I do" in reply

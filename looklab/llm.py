@@ -511,9 +511,27 @@ class DemoChatModel:
             return self._cannot_answer(text, in_domain=True, has_model=bool(self._answerer(facts)))
 
         if kind == "out_of_scope":
-            # Deliberately never offered to the model: a colour tool answering
-            # "tell me a joke" is scope creep, and a wrong answer there costs
-            # more credibility than the reply is worth.
+            # "Out of scope" here means "no keyword matched", which is not the
+            # same thing. Measured, the list missed chromatic aberration, moire
+            # and dithering -- all squarely this subject -- and declined them,
+            # while an identical question about saturation was answered.
+            #
+            # So before declining, ask retrieval. Its relevance gate is a
+            # measured definition of this subject rather than an enumeration of
+            # one: a passage must carry two distinct domain words to count. If
+            # sources come back, the question was in scope and the keyword list
+            # was simply short. If none do, the decline stands -- "tell me a
+            # joke" retrieves nothing that passes the gate, so scope creep is
+            # still refused, by evidence rather than by spelling.
+            #
+            # The unaided tier is deliberately NOT offered here. A question
+            # this app could not recognise is exactly the one where answering
+            # from memory alone is least defensible.
+            in_scope = self._scope_answerer(facts)
+            if in_scope:
+                rescued = in_scope(text, profile)
+                if rescued:
+                    return rescued
             return self._cannot_answer(text, in_domain=False, has_model=bool(self._answerer(facts)))
 
         return greeting + (
@@ -583,6 +601,16 @@ class DemoChatModel:
         calls it runs on the delegate.
         """
         return None
+
+    @staticmethod
+    def _scope_answerer(facts: dict):
+        """Callable that answers ONLY from sources, or None when unavailable.
+
+        Injected through facts for the same reason as ``_answerer``:
+        GeminiNarrator wraps this class rather than subclassing it, so an
+        override would never be reached.
+        """
+        return facts.get("_scope_answerer")
 
     @staticmethod
     def _answerer(facts: dict):
@@ -899,6 +927,21 @@ class GeminiNarrator:
         "measured. Follow the links to check it.*"
     )
 
+    def answer_from_sources_only(self, text: str, profile: dict) -> str | None:
+        """Answer a question ONLY if retrieved sources support one.
+
+        Used for questions the keyword classifier did not recognise. Returning
+        None here is a real answer: it means nothing on the subject could be
+        found, which is the evidence that the question was genuinely outside
+        what this app is about.
+        """
+        from . import research
+
+        sources = research.retrieve(text)
+        if not sources:
+            return None
+        return self._answer_from_sources(text, sources)
+
     def answer_question(self, text: str, profile: dict) -> str | None:
         """Answer a general question, grounded in retrieved sources when possible.
 
@@ -956,7 +999,11 @@ class GeminiNarrator:
         # wraps a DemoChatModel rather than subclassing it, so overriding
         # answer_question here would never be reached by the code that calls
         # it -- that code runs on the delegate.
-        facts = {**facts, "_answerer": self.answer_question}
+        facts = {
+            **facts,
+            "_answerer": self.answer_question,
+            "_scope_answerer": self.answer_from_sources_only,
+        }
 
         draft = self._demo.narrate(intent, facts)
         if self._is_factual_about_user(intent, facts):
