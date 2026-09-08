@@ -208,6 +208,16 @@ def models() -> dict[str, Any]:
         "deterministic": bool(getattr(narrator, "is_deterministic", False)),
         "rewrites": getattr(narrator, "rewrites", None),
         "fallbacks": getattr(narrator, "fallbacks", None),
+        # Which tier answered free-form questions. Without these, "is the
+        # retrieval grounding actually doing anything?" can only be answered by
+        # reading replies one at a time and guessing -- and the honest answer,
+        # the first time it was asked, was no.
+        "answering": {
+            "questions": getattr(narrator, "answers", None),
+            "grounded": getattr(narrator, "grounded", None),
+            "ungrounded": getattr(narrator, "ungrounded", None),
+            "verbatim": getattr(narrator, "verbatim", None),
+        },
     }
     try:
         from .gemini import get_pool

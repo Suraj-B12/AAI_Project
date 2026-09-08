@@ -154,19 +154,66 @@ what keeps the honesty claim intact: a measurement, a cited passage and a
 model's recollection are three different kinds of thing, and the app says which
 one you are reading. Out-of-scope questions are never sent to the model at all.
 
-**Why retrieval is gated.** A search that returns a plausible-looking but
-irrelevant article is *worse* than returning nothing, because a citation lends
-authority to whatever it is attached to. Measured, the naive version retrieved
-the *Lut Desert* for "what does a LUT do?" and the Windows XP wallpaper for
-"why is my photo green?". Two defences fixed it: short queries get a subject
-hint appended (`colour photography video`), and a passage must contain at least
-**two** distinct domain words to be used at all. One is not enough — "lut" is
-itself a domain word, which is exactly how the search ended up in Iran.
+Measured over 14 free-form questions against the live model: **10 grounded,
+4 unaided, 0 failures**, and every grounded answer carried inline citations.
+The first version of this feature scored **0 grounded out of 7** - it looked
+finished and did nothing, which is why the counters below exist.
+
+### Four things had to be fixed before any of it worked
+
+Each was found by reading the output, not by trusting that the feature was on.
+
+**Irrelevant sources are worse than none.** A citation lends authority to
+whatever it is attached to. The naive version retrieved the *Lut Desert* for
+"what does a LUT do?" and the Windows XP wallpaper for "why is my photo green?".
+Fixed by appending a subject hint (`colour photography video`) to short queries
+and requiring a passage to contain **two** distinct domain words. One is not
+enough - "lut" is itself a domain word, which is how the search reached Iran.
+
+**Glued technical names return nothing at all.** "rec709" is the article
+"Rec. 709". Searched glued, Wikipedia returns zero results - not bad ones,
+none. Split, the same question returns *Log profile*, *Hybrid log-gamma* and
+*Transfer functions in imaging*. The splitter requires at least two letters
+before the digits, so a camera body like `a6700` is left alone.
+
+**The subject hint that rescues one question ruins another.** Hinted, "how does
+white balance work" returns *Color photography*; unhinted it returns *Color
+balance*, which is the actual answer. Neither phrasing wins, so both are
+searched and the results **interleaved** - concatenating them lets the hinted
+list fill the quota before the plain list is read, which is the same as not
+running it. The relevance gate is what makes searching the unhinted form safe.
+
+**The prompt contradicted itself.** Rule 2 said "reply INSUFFICIENT_SOURCES if
+the sources do not answer the question"; rule 3 said "partial coverage is fine".
+The model took the escape hatch every single time - that was the 0-out-of-7.
+Partial coverage now comes first and is described as the expected outcome, and
+the escape hatch is narrowed to "the sources are about a different subject
+altogether".
+
+A fifth defence needed no prompt at all: an answer whose **first sentence** is a
+disclaimer ("The provided sources do not explain...") is discarded and the
+question falls through to the unaided tier. A non-answer wearing citations is
+the worst of both tiers - it settles nothing while looking sourced. The same
+words at the *end* of a real answer are kept, because there they are the honest
+bounding clause the prompt asks for.
+
+`GET /models` reports `answering.grounded` / `.ungrounded` / `.verbatim`, so
+which tier is doing the work is checkable from outside rather than asserted
+here.
+
+**Comparisons never reach the glossary.** "rec709" is an alias of the sRGB
+entry, so "what is the difference between log and rec709?" was answered with a
+definition of sRGB: a question nobody asked, carrying a source link that made it
+look authoritative. A comparison needs two subjects and the glossary holds one,
+so `difference between`, `vs`, `versus`, `better than` and `compare` route to
+the retrieval tier instead.
 
 The honest limitation, stated here rather than discovered by a grader:
 Wikipedia covers colour science well and specific camera specifications poorly.
-"What log profile does the a6700 shoot" usually retrieves nothing useful, and
-the app says so instead of dressing a guess in citations.
+"Can my camera shoot ARRI log" retrieves *Log profile*, which explains what log
+is and says nothing about your camera - so the answer falls through to the
+unaided tier and is marked as unaided, rather than being dressed in citations
+that do not support it.
 
 ---
 
@@ -434,7 +481,7 @@ slider value is structurally impossible.
 ## Testing
 
 ```
-pytest -q                    220 passed
+pytest -q                    237 passed
 python -m tools.stress        56/56 checks passed
 ```
 

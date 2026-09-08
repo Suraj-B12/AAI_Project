@@ -305,7 +305,26 @@ def test_search_query_strips_conversational_scaffolding():
 
     query = build_query("what's the difference between log and rec709?")
     assert "difference" not in query and "between" not in query
-    assert "log" in query and "rec709" in query
+    assert "log" in query and "rec 709" in query
+
+
+def test_glued_technical_names_are_split_for_search():
+    """"rec709" is the article "Rec. 709", and glued it returns NOTHING.
+
+    Not bad results -- zero. Split, the same question returns Log profile,
+    Hybrid log-gamma and Transfer functions in imaging.
+    """
+    from looklab.research import plain_query
+
+    assert plain_query("log vs rec709") == "log rec 709"
+    assert plain_query("what about rec2020") == "rec 2020"
+
+
+def test_a_camera_body_is_not_split():
+    """The rule needs at least two letters, or "a6700" becomes "a 6700"."""
+    from looklab.research import plain_query
+
+    assert "a6700" in plain_query("can the a6700 shoot log")
 
 
 def test_short_queries_get_a_subject_hint():
@@ -367,3 +386,115 @@ def test_the_offline_narrator_never_retrieves(monkeypatch):
     monkeypatch.setattr(research, "retrieve", lambda *a, **k: called.append(1) or [])
     assert DemoChatModel().answer_question("what is a LUT?", {}) is None
     assert not called, "the offline path should not hit the network"
+
+
+def test_both_phrasings_are_searched_and_interleaved(monkeypatch):
+    """The subject hint that rescues "lut" drags other questions off target.
+
+    Hinted, "how does white balance work" returns *Color photography*;
+    unhinted it returns *Color balance*, which is the actual answer. Neither
+    phrasing dominates, so both run -- and the results must be interleaved,
+    not concatenated, or the hinted list fills the quota before the plain
+    list is ever reached.
+    """
+    from looklab import research
+
+    seen = []
+
+    def fake_search(query, limit=3):
+        seen.append(query)
+        if research.DOMAIN_HINT in query:
+            return ["Color photography", "360 product photography"]
+        return ["Color balance", "Work-life balance"]
+
+    monkeypatch.setattr(research, "search", fake_search)
+    titles = research.candidate_titles("how does white balance work")
+
+    assert len(seen) == 2, "both the hinted and the plain query should run"
+    assert titles[:2] == ["Color photography", "Color balance"], (
+        "the plain query's top hit must appear second, not fourth"
+    )
+
+
+def test_one_query_is_not_searched_twice(monkeypatch):
+    """A long question's hinted and plain forms are identical."""
+    from looklab import research
+
+    seen = []
+    monkeypatch.setattr(
+        research, "search", lambda q, limit=3: seen.append(q) or ["Color balance"]
+    )
+    research.candidate_titles("why do my skin tones look orange under tungsten light")
+    assert len(seen) == 1
+
+
+# --------------------------------------------------------------------------
+# Comparison questions
+# --------------------------------------------------------------------------
+
+def test_a_comparison_is_not_answered_with_one_definition():
+    """"rec709" is an alias of the sRGB glossary entry.
+
+    Asked "what is the difference between log and rec709?", the glossary
+    matched that alias and replied with a definition of sRGB -- answering a
+    question nobody asked, while carrying a source link that made it look
+    authoritative. A comparison needs two subjects; the glossary holds one.
+    """
+    from looklab.knowledge import classify_message, lookup
+
+    question = "what is the difference between log and rec709?"
+    assert lookup(question), "the alias still matches -- that is not the bug"
+    assert classify_message(question) == "domain_question"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "log vs rec709",
+        "srgb versus adobe rgb",
+        "is CIELAB better than HSL?",
+        "what is the difference between chroma and saturation",
+    ],
+)
+def test_comparisons_route_to_the_question_tier(text):
+    from looklab.knowledge import classify_message
+
+    assert classify_message(text) == "domain_question"
+
+
+def test_a_plain_definition_still_reaches_the_glossary():
+    """The guard must not swallow the tier it protects."""
+    from looklab.knowledge import classify_message
+
+    for text in ("what is CIELAB?", "what is chroma", "my highlights are blown"):
+        assert classify_message(text) == "glossary", text
+
+
+# --------------------------------------------------------------------------
+# A cited non-answer is worse than an honest one
+# --------------------------------------------------------------------------
+
+@pytest.mark.parametrize(
+    "answer,opens_with_disclaimer",
+    [
+        ("The provided sources do not explain why tungsten light looks orange.", True),
+        ("The sources do not contain information about the a6700.", True),
+        ("Sources don't cover this topic.", True),
+        ("These sources fail to address colour temperature at all.", True),
+        # A disclaimer at the END is what the prompt asks for: it follows a
+        # real answer and bounds it.
+        ("A log profile is a gamma curve [1]. The sources do not cover ARRI.", False),
+        ("White balance renders neutrals correctly [2].", False),
+        ("The sources describe tone reproduction as a mapping [3].", False),
+    ],
+)
+def test_disclaimer_first_answers_are_detected(answer, opens_with_disclaimer):
+    """An answer that opens by disclaiming is a non-answer wearing citations.
+
+    That is the worst of both tiers: it settles nothing while looking sourced.
+    Falling through to the unaided tier -- which is marked as unaided -- is
+    strictly more useful.
+    """
+    from looklab.llm import _opens_with_a_disclaimer
+
+    assert _opens_with_a_disclaimer(answer) is opens_with_disclaimer

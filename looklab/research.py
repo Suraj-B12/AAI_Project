@@ -97,16 +97,37 @@ DOMAIN_VOCAB = (
 DOMAIN_HINT = "colour photography video"
 
 
+# Technical names in this field are written glued together in chat and spaced
+# apart in an encyclopaedia: "rec709" is the article "Rec. 709". Measured, the
+# glued form returns NOTHING -- not bad results, zero results -- while the
+# split form returns Log profile, Rec. 2100, Hybrid log-gamma and Transfer
+# functions in imaging, which is exactly the right cluster. The letter run must
+# be at least two characters so a camera body like "a6700" is left alone.
+_GLUED = re.compile(r"(?<![\w])([a-z]{2,})(\d{3,})(?![\w])")
+
+
+def _keywords(text: str) -> list[str]:
+    """Content words, with glued technical names split apart."""
+    lowered = _GLUED.sub(r"\1 \2", (text or "").lower())
+    words = re.findall(r"[\w'-]+", lowered)
+    return [w for w in words if w not in _STOP and len(w) > 1]
+
+
+def plain_query(text: str) -> str:
+    """The question stripped to its content words, with no subject hint."""
+    return " ".join(_keywords(text)[:8]) or (text or "").strip()[:60]
+
+
 def build_query(text: str) -> str:
     """Turn a chat message into a search query.
 
     Strips the conversational scaffolding so "what's the difference between log
-    and rec709" searches for "log rec709" rather than for the word "difference",
-    and adds a subject hint when what is left is short enough to be ambiguous.
+    and rec709" searches for "log rec 709" rather than for the word
+    "difference", and adds a subject hint when what is left is short enough to
+    be ambiguous.
     """
-    words = re.findall(r"[\w'-]+", (text or "").lower())
-    kept = [w for w in words if w not in _STOP and len(w) > 1]
-    query = " ".join(kept[:8]) or (text or "").strip()[:60]
+    kept = _keywords(text)
+    query = plain_query(text)
 
     # Three words or fewer is not enough to disambiguate. Note this does NOT
     # skip the hint just because a domain word is present: "lut" is a domain
@@ -191,6 +212,36 @@ def summarise(title: str) -> dict[str, Any] | None:
     }
 
 
+def candidate_titles(text: str, limit: int = 6) -> list[str]:
+    """Article titles from both phrasings of the question, best first.
+
+    The subject hint that rescues "lut" also drags other questions away from
+    the article that answers them: hinted, "how does white balance work"
+    returns *Color photography*; unhinted it returns *Color balance*, which is
+    the actual answer. Neither phrasing dominates, so both are searched and
+    the results merged. The relevance gate downstream is what makes this safe
+    -- the unhinted query's junk (*Lut Desert*, *Work-life balance*) is
+    discarded there rather than being trusted here.
+    """
+    hinted = build_query(text)
+    plain = plain_query(text)
+    lists = [search(q, limit=limit) for q in dict.fromkeys([hinted, plain]) if q]
+
+    # Interleaved, not concatenated. Concatenating lets the hinted query's
+    # results fill the caller's quota before the plain query is reached, which
+    # is the same as not running it: "how does white balance work" kept
+    # returning *Color photography* while *Color balance* sat unread at the top
+    # of the other list.
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for rank in range(max((len(x) for x in lists), default=0)):
+        for titles in lists:
+            if rank < len(titles) and titles[rank] not in seen:
+                seen.add(titles[rank])
+                ordered.append(titles[rank])
+    return ordered
+
+
 def retrieve(text: str, limit: int = 3) -> list[dict[str, Any]]:
     """Sources relevant to a question. Cached, deadline-bounded, never raises.
 
@@ -207,7 +258,7 @@ def retrieve(text: str, limit: int = 3) -> list[dict[str, Any]]:
 
     started = time.monotonic()
     # Over-fetch, because the relevance gate discards some.
-    titles = search(query, limit=limit + 3)
+    titles = candidate_titles(text, limit=limit + 3)
     sources: list[dict[str, Any]] = []
     for title in titles:
         if time.monotonic() - started > TOTAL_DEADLINE or len(sources) >= limit:

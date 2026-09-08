@@ -703,6 +703,23 @@ def _colour_word(lab_hue: float) -> str:
     return best
 
 
+# Openings that mean "I have nothing to tell you". Matched only against the
+# first sentence, because the same words at the end of a real answer are the
+# honest bounding clause rule 2 asks for.
+_DISCLAIMER_OPENING = re.compile(
+    r"^\W*(the|these|those|such|your|my)?\s*"
+    r"(provided|given|supplied|numbered|available|cited|above)?\s*sources?\b[^.]{0,120}?"
+    r"\b(do(es)?\s+not|don'?t|doesn'?t|fail\s+to|cannot|can'?t|lack|contain\s+no)\b",
+    re.IGNORECASE,
+)
+
+
+def _opens_with_a_disclaimer(answer: str) -> bool:
+    """Does the answer begin by saying the sources do not cover the question?"""
+    first = re.split(r"(?<=[.!?])\s", (answer or "").strip(), maxsplit=1)[0]
+    return bool(_DISCLAIMER_OPENING.search(first))
+
+
 class GeminiNarrator:
     """Rewrites the deterministic draft with Gemini, over a pool of keys.
 
@@ -828,6 +845,17 @@ class GeminiNarrator:
         if answer.upper().startswith("INSUFFICIENT_SOURCES"):
             return None
 
+        # An answer whose FIRST sentence is a disclaimer is a non-answer
+        # wearing citations, and that is the worst of both tiers: it settles
+        # nothing while looking sourced. Measured, "why do my skin tones look
+        # orange under tungsten light?" came back as "The provided sources do
+        # not explain the colour temperature of tungsten light" -- true, but
+        # the unaided tier answers that question well, so falling through is
+        # strictly better. A disclaimer at the END is fine and is what rule 2
+        # asks for: it follows a real answer and bounds it.
+        if _opens_with_a_disclaimer(answer):
+            return None
+
         # Only claim the answer is grounded if it actually cites something.
         # An uncited answer went to the model with sources and came back
         # ignoring them, which is exactly the case the marker must not cover.
@@ -845,14 +873,22 @@ class GeminiNarrator:
         "RULES:\n"
         "1. Every factual claim must come from a source. Cite it inline as "
         "[1], [2] and so on.\n"
-        "2. If the sources do not actually answer the question, reply with "
-        "exactly INSUFFICIENT_SOURCES on the first line and nothing else. Do "
-        "not fill the gap from memory here -- another step handles that.\n"
-        "3. Partial coverage is fine: answer the part the sources support and "
-        "say which part they do not.\n"
-        "3. Two short paragraphs at most. No preamble, no sign-off, no "
+        "2. Partial coverage is normal and is what you should do. If the "
+        "sources cover the subject but not every part of the question, answer "
+        "the part they do cover, cite it, and say in one short clause what "
+        "they do not settle. That is a good answer, not a failure. A source "
+        "that explains the underlying idea counts even when it never uses the "
+        "questioner's exact word for it.\n"
+        "3. Reply with exactly INSUFFICIENT_SOURCES on the first line and "
+        "nothing else ONLY when the sources are about a different subject "
+        "altogether and you would have to invent the whole answer. Do not use "
+        "it because the sources are indirect, general, or do not name the "
+        "exact term. Another step handles the genuinely uncovered case. If "
+        "your answer would OPEN by saying the sources do not cover this, that "
+        "is the case: emit INSUFFICIENT_SOURCES instead of writing it.\n"
+        "4. Two short paragraphs at most. No preamble, no sign-off, no "
         "headings.\n"
-        "4. Never claim anything about LookLab itself. It measures an "
+        "5. Never claim anything about LookLab itself. It measures an "
         "uploaded photo's colour, recommends Lightroom sliders, and critiques "
         "an edit. It does not apply LUTs, transform footage or handle video.\n"
         "Plain markdown."

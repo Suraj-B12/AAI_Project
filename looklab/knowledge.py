@@ -147,6 +147,24 @@ def _matches(text: str, patterns: tuple[str, ...]) -> bool:
     return any(re.search(p, text, flags=re.IGNORECASE) for p in patterns)
 
 
+# A comparison is not a definition, and the glossary can only define. Asked
+# "what is the difference between log and rec709?", the glossary matched
+# "rec709" (an alias of sRGB) and replied with a definition of sRGB -- which
+# answers a question nobody asked while looking authoritative, because it
+# arrives with a source link. Comparisons go to the retrieval tier instead,
+# which can hold two subjects at once.
+_COMPARISON = re.compile(
+    r"(?<!\w)(difference(s)? between|compare[ds]?|comparison|"
+    r"vs\.?|versus|better than|instead of)(?!\w)",
+    re.IGNORECASE,
+)
+
+
+def is_comparison(text: str) -> bool:
+    """Does this ask how two things differ, rather than what one thing is?"""
+    return bool(_COMPARISON.search(text or ""))
+
+
 def classify_message(text: str) -> str:
     """What kind of free-form message is this?
 
@@ -170,10 +188,15 @@ def classify_message(text: str) -> str:
     lowered = text.lower()
     looks_like_question = any(h in lowered for h in QUESTION_HINTS)
 
-    if lookup(text):
+    if lookup(text) and not is_comparison(text):
         return "glossary"
-    if any(word in lowered for word in DOMAIN_WORDS):
-        return "domain_question" if looks_like_question else "domain_statement"
+    if is_comparison(text) or any(word in lowered for word in DOMAIN_WORDS):
+        # A comparison that reached here mentioned a known term, so it is in
+        # scope even when it phrases the question without a question word
+        # ("log vs rec709").
+        if looks_like_question or is_comparison(text):
+            return "domain_question"
+        return "domain_statement"
     if looks_like_question:
         return "out_of_scope"
     return "unclear"
