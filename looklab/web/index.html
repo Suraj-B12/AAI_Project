@@ -474,13 +474,34 @@
       .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   }
 
-  // Minimal inline markdown: bold, italics, code. Escaped first, so nothing
-  // the server returns can inject markup.
+  // Minimal inline markdown: links, bold, code, italics. Escaped FIRST, so
+  // nothing the server returns can inject markup -- every rule below can only
+  // ever wrap text that is already inert.
+  //
+  // Links matter more than they look. Retrieved answers cite their sources,
+  // and a citation a reader cannot click is decoration: the whole claim of the
+  // grounded tier is "check me". Before this rule they rendered as literal
+  // [title](https://...) bracket soup.
+  //
+  // Only http(s) is accepted, so javascript: and data: URLs cannot be built
+  // even if a source were hostile, and the URL class excludes quotes because
+  // esc() deliberately does not escape them -- without that exclusion a quote
+  // in a URL would break out of the href attribute.
+  var MD_LINK = /\[([^\]]+)\]\((https?:\/\/[^\s)"']+)\)/g;
+
   function md(s) {
     return esc(s)
+      .replace(MD_LINK, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>')
       .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
       .replace(/`([^`]+)`/g, "<code>$1</code>")
-      .replace(/(^|[\s(])_([^_]+)_(?=[\s.,)]|$)/g, "$1<em>$2</em>");
+      // Both italic markers require a boundary on each side, and that is not
+      // fussiness -- it is what keeps "L*a*b*" and "a* and b* axes" intact in a
+      // colour-science app where the asterisk is notation, not markup. In
+      // "L*a*b*" the first asterisk follows a word character, so the rule
+      // cannot fire. A real emphasis span always opens after a space or an
+      // opening bracket and closes before a space or punctuation.
+      .replace(/(^|[\s(])_([^_]+)_(?=[\s.,)]|$)/g, "$1<em>$2</em>")
+      .replace(/(^|[\s(])\*([^*\n]+)\*(?=[\s.,)]|$)/g, "$1<em>$2</em>");
   }
 
   function showError(msg) {

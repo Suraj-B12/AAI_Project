@@ -494,7 +494,7 @@ slider value is structurally impossible.
 ## Testing
 
 ```
-pytest -q                    244 passed
+pytest -q                    264 passed
 python -m tools.stress        56/56 checks passed
 ```
 
